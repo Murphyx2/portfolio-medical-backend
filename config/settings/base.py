@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
+    "drf_spectacular",
     # Local apps
     "apps.core",
     "apps.accounts",
@@ -129,6 +130,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_FILTER_BACKENDS": ("django_filters.rest_framework.DjangoFilterBackend",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "PAGE_SIZE": 20,
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
@@ -180,6 +182,18 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Fernet key used for field-level PII encryption (see apps/core/encryption.py).
 PII_FIELD_KEY = env("PII_FIELD_KEY", "")
+
+# ------------------------------------------------------------------
+# OpenAPI / Swagger (drf-spectacular)
+# ------------------------------------------------------------------
+SPECTACULAR_SETTINGS = {
+    "TITLE": "MedicalConsultations API",
+    "DESCRIPTION": "Role-based medical consultations management system.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    "COMPONENT_SPLIT_REQUEST": True,
+}
 
 # Root urls for the API.
 API_URL_PREFIX = env("DJANGO_API_PREFIX", "api")

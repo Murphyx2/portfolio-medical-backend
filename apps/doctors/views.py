@@ -20,7 +20,7 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.is_doctor:
+        if getattr(self.request.user, "is_doctor", False):
             qs = qs.filter(user=self.request.user)
         return qs
 
@@ -38,6 +38,6 @@ class DoctorScheduleViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.is_doctor:
+        if getattr(self.request.user, "is_doctor", False):
             qs = qs.filter(doctor__user=self.request.user)
         return qs

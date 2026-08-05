@@ -33,7 +33,7 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.is_doctor:
+        if getattr(self.request.user, "is_doctor", False):
             qs = qs.filter(doctor__user=self.request.user)
         return qs
 
@@ -48,7 +48,7 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         binding = self.get_object()
-        if not request.user.is_admin:
+        if not getattr(request.user, "is_admin", False):
             self.permission_denied(request, message="Only admins can approve bindings.")
         binding.approved = True
         binding.approved_by = request.user

@@ -114,13 +114,21 @@ def is_staff_role(user) -> bool:
 
 class PatientDataPermission(BasePermission):
     """
-    Patient data is sensitive: writes require staff roles; reads are allowed
-    for authenticated staff only, and doctors see full records while others
-    see redacted summaries (enforced by serializers).
+    Patient data is sensitive: writes require Admin/Doctor/Receptionist; reads
+    are allowed for authenticated staff only, and doctors see full records
+    while others see redacted summaries (enforced by serializers).
     """
 
     def has_permission(self, request, view):
-        return is_staff_role(request.user)
+        if not is_staff_role(request.user):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return (
+            request.user.is_admin
+            or request.user.is_doctor
+            or request.user.is_receptionist
+        )
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:

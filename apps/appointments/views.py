@@ -31,7 +31,10 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         appointment = self.get_object()
-        if not (request.user.is_receptionist or request.user.is_admin):
+        if not (
+            getattr(request.user, "is_receptionist", False)
+            or getattr(request.user, "is_admin", False)
+        ):
             self.permission_denied(request, message="Only receptionists or admins may cancel.")
         appointment.status = Appointment.Status.CANCELLED
         appointment.save()
@@ -47,7 +50,10 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         appointment = self.get_object()
-        if not (request.user.is_doctor or request.user.is_admin):
+        if not (
+            getattr(request.user, "is_doctor", False)
+            or getattr(request.user, "is_admin", False)
+        ):
             self.permission_denied(request, message="Only doctors or admins may complete.")
         appointment.status = Appointment.Status.COMPLETED
         appointment.save()
