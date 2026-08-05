@@ -23,6 +23,16 @@ class RecordImageSerializer(serializers.ModelSerializer):
         fields = ["id", "record", "image", "image_url", "caption", "uploaded_by"]
         read_only_fields = ["id", "image_url", "uploaded_by"]
 
+    def validate_image(self, value):
+        if value is None:
+            return value
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Image must be smaller than 5 MB.")
+        ext = value.name.rsplit(".", 1)[-1].lower() if "." in value.name else ""
+        if ext not in {"jpg", "jpeg", "png", "gif", "webp"}:
+            raise serializers.ValidationError("Unsupported image format.")
+        return value
+
     def get_image_url(self, obj):
         request = self.context.get("request")
         if obj.image and request:
