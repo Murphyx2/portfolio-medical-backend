@@ -59,7 +59,7 @@ class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsDoctorOrNurse]
+            self.permission_classes = [CanManageRecords]
         return super().get_permissions()
 
     @transaction.atomic
