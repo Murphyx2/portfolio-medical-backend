@@ -1,8 +1,14 @@
+from io import BytesIO
+
+from PIL import Image
 from rest_framework import serializers
 
+from apps.centers.models import DoctorCenterBinding
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+
+ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
 
 CLINICAL_FIELDS = ["diagnosis", "treatment", "medicine_and_doses", "notes"]
 
@@ -30,6 +36,17 @@ class RecordImageSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Image must be smaller than 5 MB.")
         ext = value.name.rsplit(".", 1)[-1].lower() if "." in value.name else ""
         if ext not in {"jpg", "jpeg", "png", "gif", "webp"}:
+            raise serializers.ValidationError("Unsupported image format.")
+        # Verify magic bytes / real image content, not just the extension.
+        try:
+            image = Image.open(BytesIO(value.read()))
+            format_name = image.format
+            image.verify()
+        except Exception:
+            raise serializers.ValidationError("File is not a valid image.")
+        finally:
+            value.seek(0)
+        if format_name not in ALLOWED_IMAGE_FORMATS:
             raise serializers.ValidationError("Unsupported image format.")
         return value
 
@@ -69,6 +86,19 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
 
+    def validate(self, attrs):
+        user = getattr(getattr(self.context.get("request"), "user", None), "id", None)
+        center = attrs.get("center")
+        if user and center is not None:
+            user_obj = self.context["request"].user
+            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
+                doctor__user=user_obj, center=center, approved=True
+            ).exists():
+                raise serializers.ValidationError(
+                    {"center": "You are not approved to work at this center."}
+                )
+        return attrs
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")
@@ -106,6 +136,19 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
 
     def get_doctor_name(self, obj):
         return obj.doctor.get_full_name() or obj.doctor.username
+
+    def validate(self, attrs):
+        user = getattr(getattr(self.context.get("request"), "user", None), "id", None)
+        center = attrs.get("center")
+        if user and center is not None:
+            user_obj = self.context["request"].user
+            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
+                doctor__user=user_obj, center=center, approved=True
+            ).exists():
+                raise serializers.ValidationError(
+                    {"center": "You are not approved to work at this center."}
+                )
+        return attrs
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

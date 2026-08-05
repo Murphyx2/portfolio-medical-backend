@@ -1,4 +1,5 @@
-from rest_framework import viewsets
+from django.db import IntegrityError
+from rest_framework import serializers, viewsets
 from rest_framework.permissions import SAFE_METHODS
 
 from apps.core.mixins import AuditMixin
@@ -23,6 +24,22 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
         if getattr(self.request.user, "is_doctor", False):
             qs = qs.filter(user=self.request.user)
         return qs
+
+    def perform_create(self, serializer):
+        try:
+            super().perform_create(serializer)
+        except IntegrityError:
+            raise serializers.ValidationError(
+                {"user": "This user already has a doctor profile."}
+            )
+
+    def perform_update(self, serializer):
+        try:
+            super().perform_update(serializer)
+        except IntegrityError:
+            raise serializers.ValidationError(
+                {"user": "This user already has a doctor profile."}
+            )
 
 
 class DoctorScheduleViewSet(AuditMixin, viewsets.ModelViewSet):

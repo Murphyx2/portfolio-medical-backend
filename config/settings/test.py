@@ -1,5 +1,7 @@
 """Test settings: fast, isolated SQLite in-memory DB and fixed test key."""
 
+from cryptography.fernet import Fernet
+
 from .dev import *  # noqa: F401,F403
 
 # Fast in-memory tests, independent of PostgreSQL/Redis in the host.
@@ -12,7 +14,8 @@ DATABASES = {
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
-PII_FIELD_KEY = "alyI0fnDeRnpQBbZBGSruo6djlfn4J5XW0I-_mNiCA0="
+# Ephemeral Fernet key generated per test run — never commit a real key.
+PII_FIELD_KEY = Fernet.generate_key().decode()
 
 CACHES = {
     "default": {

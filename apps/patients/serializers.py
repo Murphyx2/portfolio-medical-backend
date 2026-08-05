@@ -48,8 +48,12 @@ class PatientSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")
-        if request and getattr(request.user, "is_it", False):
-            # Least privilege: IT maintains the system, not patient PII.
+        user = getattr(request, "user", None) if request else None
+        if user and user.is_authenticated and not (
+            user.is_admin or user.is_doctor or user.is_nurse
+        ):
+            # Least privilege: only clinical roles (admin/doctor/nurse) get full
+            # contact PII; IT, receptionists, and center managers see redacted values.
             for field in ("phone", "address", "email"):
                 data[field] = _mask(data[field])
         return data

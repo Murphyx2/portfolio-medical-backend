@@ -1,6 +1,28 @@
 from apps.core.models import AuditLog
 
 
+def user_accessible_center_ids(user) -> set[int]:
+    """Center ids a user may work with.
+
+    Admins can access all centers. Doctors are scoped to their approved
+    center bindings. Other staff roles have no center relationship in the
+    data model yet, so they are treated as center-agnostic (full scope).
+    """
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    if getattr(user, "is_admin", False):
+        return set()
+    if getattr(user, "is_doctor", False):
+        from apps.centers.models import DoctorCenterBinding
+
+        return set(
+            DoctorCenterBinding.objects.filter(
+                doctor__user=user, approved=True
+            ).values_list("center_id", flat=True)
+        )
+    return set()
+
+
 def log_audit(
     *,
     user,

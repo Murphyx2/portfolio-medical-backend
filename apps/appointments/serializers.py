@@ -51,6 +51,16 @@ class AppointmentSerializer(serializers.ModelSerializer):
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
 
+    def validate_doctor(self, value):
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        if user and user.is_authenticated and user.is_doctor:
+            if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
+                raise serializers.ValidationError(
+                    "Doctors may only manage appointments for themselves."
+                )
+        return value
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")

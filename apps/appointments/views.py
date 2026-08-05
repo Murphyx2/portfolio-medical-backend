@@ -8,7 +8,7 @@ from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import CanManageAppointments, IsStaffUser
-from apps.core.services import client_ip, log_audit
+from apps.core.services import client_ip, log_audit, user_accessible_center_ids
 
 
 class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -23,6 +23,13 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
         if self.request.method not in SAFE_METHODS:
             self.permission_classes = [CanManageAppointments]
         return super().get_permissions()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if getattr(user, "is_doctor", False):
+            qs = qs.filter(doctor__user=user)
+        return qs
 
     @transaction.atomic
     def perform_create(self, serializer):

@@ -14,7 +14,7 @@ class EncryptedTextField(models.TextField):
         return value if is_encrypted(str(value)) else self._encrypt(str(value))
 
     def from_db_value(self, value, expression, connection, context=None):
-        if value is None:
+        if value is None or value == "":
             return value
         return decrypt_token(str(value))
 

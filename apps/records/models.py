@@ -1,3 +1,6 @@
+import os
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -76,7 +79,10 @@ class ConsultationLog(TimestampedModel):
 
 
 def record_image_upload_to(instance, filename: str) -> str:
-    return f"records/{instance.record.patient_id}/{filename}"
+    # Randomize stored names: avoids enumerable URLs and user-controlled names.
+    ext = os.path.splitext(filename)[1].lower()
+    name = f"{uuid.uuid4().hex}{ext}"
+    return f"records/{instance.record.patient_id}/{name}"
 
 
 class RecordImage(TimestampedModel):

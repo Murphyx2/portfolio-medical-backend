@@ -11,4 +11,4 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
     filterset_fields = ["first_name", "last_name", "gender"]
-    search_fields = ["first_name", "last_name", "email"]
+    search_fields = ["first_name", "last_name"]

@@ -162,7 +162,7 @@ CORS_ALLOWED_ORIGINS = [
     for o in env("DJANGO_CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
     if o.strip()
 ]
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_CREDENTIALS = False
 
 # ------------------------------------------------------------------
 # i18n / static / media
@@ -191,7 +191,8 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Role-based medical consultations management system.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
-    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    # API docs are sensitive reconnaissance material: admins/IT only.
+    "SERVE_PERMISSIONS": ["apps.core.permissions.IsAdminOrIT"],
     "COMPONENT_SPLIT_REQUEST": True,
 }
 

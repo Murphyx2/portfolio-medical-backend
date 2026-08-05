@@ -1,5 +1,9 @@
+import logging
+
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 _cipher: Fernet | None = None
 
@@ -26,7 +30,9 @@ def decrypt_token(value: str) -> str:
     try:
         return get_cipher().decrypt(value.encode()).decode()
     except InvalidToken:
-        return value
+        # Fail closed: never surface raw ciphertext to clients.
+        logger.error("Failed to decrypt a PII value; failing closed.", exc_info=True)
+        raise ValueError("An encrypted field could not be decrypted.")
 
 
 def is_encrypted(value: str) -> bool:
