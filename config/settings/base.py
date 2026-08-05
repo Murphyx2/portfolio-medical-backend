@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.accounts",
     "apps.centers",
+    "apps.ars",
     "apps.doctors",
     "apps.patients",
     "apps.records",
@@ -167,7 +168,7 @@ CORS_ALLOW_CREDENTIALS = False
 # ------------------------------------------------------------------
 # i18n / static / media
 # ------------------------------------------------------------------
-LANGUAGE_CODE = "en-us"
+LANGUAGE_CODE = "es"
 TIME_ZONE = env("TZ", "UTC")
 USE_I18N = True
 USE_TZ = True

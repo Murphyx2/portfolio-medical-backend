@@ -34,6 +34,12 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+        log_audit(
+            user=self.request.user,
+            action="CREATE",
+            target=serializer.instance,
+            ip_address=client_ip(self.request),
+        )
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):

@@ -18,6 +18,7 @@ class AuditLog(TimestampedModel):
         UPDATE = "UPDATE", "Update"
         DELETE = "DELETE", "Delete"
         LOGIN = "LOGIN", "Login"
+        LOGOUT = "LOGOUT", "Logout"
         FAILED_LOGIN = "FAILED_LOGIN", "Failed login"
         EXPORT = "EXPORT", "Export"
 

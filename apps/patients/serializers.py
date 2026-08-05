@@ -1,4 +1,5 @@
 from datetime import date
+import re
 
 from rest_framework import serializers
 
@@ -13,9 +14,16 @@ def _mask(value: str) -> str:
     return f"{value[:2]}••••{value[-2:]}"
 
 
+CEDULA_RE = re.compile(r"^\d{3}-\d{7}-\d{1}$")
+
+
 class PatientSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
+    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
+    ars_program_name = serializers.CharField(
+        source="ars_program.name", read_only=True, default=None
+    )
 
     class Meta:
         model = Patient
@@ -30,6 +38,12 @@ class PatientSerializer(serializers.ModelSerializer):
             "phone",
             "address",
             "email",
+            "cedula",
+            "nss",
+            "ars",
+            "ars_name",
+            "ars_program",
+            "ars_program_name",
             "created_at",
             "updated_at",
         ]
@@ -45,15 +59,37 @@ class PatientSerializer(serializers.ModelSerializer):
             - ((today.month, today.day) < (obj.birth_date.month, obj.birth_date.day))
         )
 
+    def validate_cedula(self, value: str) -> str:
+        if value and not CEDULA_RE.match(value):
+            raise serializers.ValidationError(
+                "Cedula must be in the format 000-0000000-0."
+            )
+        return value
+
+    def validate_nss(self, value: str) -> str:
+        if value and not value.isdigit():
+            raise serializers.ValidationError("NSS must contain digits only.")
+        return value
+
+    def validate(self, attrs):
+        ars = attrs.get("ars")
+        if ars is None and self.instance is not None:
+            ars = self.instance.ars
+        program = attrs.get("ars_program")
+        if ars is not None and program is not None and program.ars_id != ars.id:
+            raise serializers.ValidationError(
+                {"ars_program": "The selected program does not belong to the selected ARS."}
+            )
+        return attrs
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         if user and user.is_authenticated and not (
-            user.is_admin or user.is_doctor or user.is_nurse
+            user.is_admin or user.is_doctor or user.is_nurse or user.is_receptionist
         ):
-            # Least privilege: only clinical roles (admin/doctor/nurse) get full
-            # contact PII; IT, receptionists, and center managers see redacted values.
-            for field in ("phone", "address", "email"):
+            # IT and center managers see redacted contact PII and identifiers.
+            for field in ("phone", "address", "email", "cedula", "nss"):
                 data[field] = _mask(data[field])
         return data

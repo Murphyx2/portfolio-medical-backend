@@ -14,6 +14,7 @@ from apps.accounts.serializers import (
     UserCreateSerializer,
     UserSerializer,
 )
+from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdminOrIT
 from apps.core.services import client_ip, log_audit
 
@@ -103,7 +104,7 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(AuditMixin, viewsets.ModelViewSet):
     """Admin/IT manage system users and roles."""
 
     queryset = User.objects.all().order_by("username")

@@ -37,6 +37,17 @@ class IsReceptionist(BasePermission):
         )
 
 
+class IsAdminOrReceptionist(BasePermission):
+    """Admins and receptionists may manage ARS records."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_admin or request.user.is_receptionist)
+        )
+
+
 class IsDoctorOrReceptionist(BasePermission):
     def has_permission(self, request, view):
         return bool(

@@ -40,7 +40,9 @@ def test_logout_returns_204_and_blacklists_refresh(api_client, admin_user):
         format="json",
     )
     assert reuse.status_code == 401
-    assert "blacklisted" in str(reuse.data).lower() or "invalid" in str(reuse.data).lower()
+    # Language-agnostic: SimpleJWT returns {"detail": ..., "code": "token_not_valid"}
+    # for blacklisted tokens (detail text is localized, e.g. Spanish under LANGUAGE_CODE="es").
+    assert reuse.data.get("code") == "token_not_valid"
 
 
 def test_logout_missing_refresh_returns_400(api_client, admin_user):

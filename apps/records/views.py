@@ -9,7 +9,7 @@ from apps.core.permissions import (
     IsDoctorOrNurse,
     IsStaffUser,
 )
-from apps.core.services import user_accessible_center_ids
+from apps.core.services import client_ip, log_audit, user_accessible_center_ids
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
     ConsultationLogSerializer,
@@ -43,6 +43,12 @@ class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+        log_audit(
+            user=self.request.user,
+            action="CREATE",
+            target=serializer.instance,
+            ip_address=client_ip(self.request),
+        )
 
 
 class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -67,6 +73,12 @@ class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         serializer.save(doctor=self.request.user)
+        log_audit(
+            user=self.request.user,
+            action="CREATE",
+            target=serializer.instance,
+            ip_address=client_ip(self.request),
+        )
 
 
 class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -83,3 +95,9 @@ class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+        log_audit(
+            user=self.request.user,
+            action="CREATE",
+            target=serializer.instance,
+            ip_address=client_ip(self.request),
+        )

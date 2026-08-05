@@ -10,5 +10,5 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Patient.objects.all()
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
-    filterset_fields = ["first_name", "last_name", "gender"]
+    filterset_fields = ["first_name", "last_name", "gender", "ars"]
     search_fields = ["first_name", "last_name"]

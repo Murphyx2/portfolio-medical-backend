@@ -26,6 +26,24 @@ class Patient(TimestampedModel):
     phone = EncryptedCharField(blank=True)
     address = EncryptedTextField(blank=True)
     email = EncryptedCharField(blank=True)
+    cedula = EncryptedCharField(blank=True)
+    nss = EncryptedCharField(blank=True)
+
+    # Insurance (ARS) binding
+    ars = models.ForeignKey(
+        "ars.ARS",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="patients",
+    )
+    ars_program = models.ForeignKey(
+        "ars.ARSProgram",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="patients",
+    )
 
     # Read-only full name helper for display/search
     class Meta:
