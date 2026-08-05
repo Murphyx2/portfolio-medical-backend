@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_filters",
     # Local apps
+    "apps.core",
     "apps.accounts",
     "apps.centers",
     "apps.doctors",
@@ -175,3 +176,9 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Fernet key used for field-level PII encryption (see apps/core/encryption.py).
+PII_FIELD_KEY = env("PII_FIELD_KEY", "")
+
+# Root urls for the API.
+API_URL_PREFIX = env("DJANGO_API_PREFIX", "api")
