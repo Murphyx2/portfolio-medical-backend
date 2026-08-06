@@ -30,12 +30,19 @@ def test_create_patient_by_receptionist(auth_client, receptionist_user):
 def test_patient_pii_is_encrypted_at_rest(auth_client, receptionist_user):
     auth_client(receptionist_user).post("/api/patients/", _patient_payload(), format="json")
     with connection.cursor() as cursor:
-        cursor.execute("SELECT phone, address, email FROM patients_patient LIMIT 1")
-        raw_phone, raw_address, raw_email = cursor.fetchone()
+        cursor.execute(
+            "SELECT phone, address, email, first_name, last_name, birth_date "
+            "FROM patients_patient LIMIT 1"
+        )
+        raw_phone, raw_address, raw_email, raw_fn, raw_ln, raw_bd = cursor.fetchone()
     assert is_encrypted(raw_phone)
     assert is_encrypted(raw_address)
     assert is_encrypted(raw_email)
+    assert is_encrypted(raw_fn)
+    assert is_encrypted(raw_ln)
+    assert is_encrypted(raw_bd)
     assert "+1-555-0100" not in raw_phone
+    assert "Jane" not in raw_fn
 
 
 def test_anonymous_cannot_read_patients(api_client):

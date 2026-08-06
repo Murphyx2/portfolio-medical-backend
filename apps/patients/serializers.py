@@ -21,6 +21,7 @@ class PatientSerializer(serializers.ModelSerializer):
     ars_program_name = serializers.CharField(
         source="ars_program.name", read_only=True, default=None
     )
+    center_name = serializers.CharField(source="center.name", read_only=True, default=None)
 
     class Meta:
         model = Patient
@@ -32,6 +33,8 @@ class PatientSerializer(serializers.ModelSerializer):
             "birth_date",
             "age",
             "gender",
+            "center",
+            "center_name",
             "phone",
             "address",
             "email",
@@ -49,11 +52,17 @@ class PatientSerializer(serializers.ModelSerializer):
     def get_age(self, obj) -> int | None:
         if not obj.birth_date:
             return None
+        bd = obj.birth_date
+        if isinstance(bd, str):
+            try:
+                bd = date.fromisoformat(bd)
+            except ValueError:
+                return None
         today = date.today()
         return (
             today.year
-            - obj.birth_date.year
-            - ((today.month, today.day) < (obj.birth_date.month, obj.birth_date.day))
+            - bd.year
+            - ((today.month, today.day) < (bd.month, bd.day))
         )
 
     def validate_cedula(self, value: str) -> str:
@@ -80,6 +89,17 @@ class PatientSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
             )
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        center = attrs.get("center")
+        if user and getattr(user, "is_doctor", False) and center is not None:
+            from apps.core.services import user_accessible_center_ids
+
+            if center.id not in user_accessible_center_ids(user):
+                raise serializers.ValidationError(
+                    {"center": "You are not approved to work at this center."}
+                )
         return attrs
 
     def to_representation(self, instance):
@@ -89,7 +109,13 @@ class PatientSerializer(serializers.ModelSerializer):
         if user and user.is_authenticated and not (
             user.is_admin or user.is_doctor or user.is_nurse or user.is_receptionist
         ):
-            # IT and center managers see redacted contact PII and identifiers.
+            # IT and center managers see redacted contact PII, identifiers,
+            # and names/birth date.
             for field in ("phone", "address", "email", "cedula", "nss"):
                 data[field] = _mask(data[field])
+            data["first_name"] = _mask(data["first_name"])
+            data["last_name"] = _mask(data["last_name"])
+            data["full_name"] = _mask(data["full_name"])
+            data["birth_date"] = _mask(data["birth_date"]) if data.get("birth_date") else data.get("birth_date")
+            data["age"] = None
         return data

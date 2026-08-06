@@ -21,9 +21,14 @@ class User(AbstractUser):
     )
 
     def save(self, *args, **kwargs):
-        if self.role in (self.Role.ADMIN, self.Role.IT):
+        if self.role == self.Role.ADMIN:
             self.is_staff = True
-            self.is_superuser = self.is_superuser or self.role == self.Role.ADMIN
+            self.is_superuser = True
+        elif self.role == self.Role.IT:
+            # IT manages systems via the API; it must not get Django admin
+            # access (which would expose decrypted PII to a masked role).
+            self.is_staff = False
+            self.is_superuser = False
         super().save(*args, **kwargs)
 
     @property

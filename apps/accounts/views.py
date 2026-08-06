@@ -122,3 +122,12 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
             for value, label in User.Role.choices
         ]
         return Response(choices)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_admin and not request.user.is_admin:
+            return Response(
+                {"detail": "Only admins can delete admin accounts."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)

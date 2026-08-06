@@ -13,9 +13,12 @@ class Patient(TimestampedModel):
         OTHER = "OTHER", "Other"
         UNSPECIFIED = "UNSPECIFIED", "Unspecified"
 
-    first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
-    birth_date = models.DateField(null=True, blank=True)
+    # Names/birth date are PII too: encrypted at rest. A plaintext lowercase
+    # `search_name` index column keeps name search working (documented tradeoff).
+    first_name = EncryptedCharField()
+    last_name = EncryptedCharField()
+    birth_date = EncryptedCharField(null=True, blank=True)
+    search_name = models.CharField(max_length=201, blank=True)
     gender = models.CharField(
         max_length=20,
         choices=Gender.choices,
@@ -28,6 +31,15 @@ class Patient(TimestampedModel):
     email = EncryptedCharField(blank=True)
     cedula = EncryptedCharField(blank=True)
     nss = EncryptedCharField(blank=True)
+
+    # Center where the patient is registered (null = unbound/visible to all staff).
+    center = models.ForeignKey(
+        "centers.MedicalCenter",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="patients",
+    )
 
     # Insurance (ARS) binding
     ars = models.ForeignKey(
@@ -45,12 +57,15 @@ class Patient(TimestampedModel):
         related_name="patients",
     )
 
-    # Read-only full name helper for display/search
     class Meta:
-        ordering = ["last_name", "first_name"]
+        ordering = ["search_name"]
         indexes = [
-            models.Index(fields=["last_name", "first_name"]),
+            models.Index(fields=["search_name"]),
         ]
+
+    def save(self, *args, **kwargs):
+        self.search_name = f"{self.first_name or ''} {self.last_name or ''}".strip().lower()
+        super().save(*args, **kwargs)
 
     @property
     def full_name(self) -> str:

@@ -1,9 +1,11 @@
 from io import BytesIO
 
+from django.db.models import Q
 from PIL import Image
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
+from apps.core.services import sign_media_token, user_accessible_center_ids
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
@@ -11,6 +13,19 @@ from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
 
 CLINICAL_FIELDS = ["diagnosis", "treatment", "medicine_and_doses", "notes"]
+
+
+def _validate_patient_scope(context, attrs, user, instance):
+    """Doctors may only write records for patients not bound to other centers."""
+    if not user or not getattr(user, "is_doctor", False):
+        return
+    patient = attrs.get("patient") or (instance.patient if instance else None)
+    if patient is None:
+        return
+    if patient.center_id is not None and patient.center_id not in user_accessible_center_ids(user):
+        raise serializers.ValidationError(
+            {"patient": "The patient is not in your accessible centers."}
+        )
 
 
 class PatientLiteSerializer(serializers.ModelSerializer):
@@ -50,11 +65,27 @@ class RecordImageSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Unsupported image format.")
         return value
 
+    def validate(self, attrs):
+        user = getattr(self.context.get("request"), "user", None)
+        record = attrs.get("record")
+        if user and getattr(user, "is_doctor", False) and record is not None:
+            center_ids = user_accessible_center_ids(user)
+            if not MedicalRecord.objects.filter(pk=record.pk).filter(
+                Q(center_id__in=center_ids) | Q(created_by=user)
+            ).exists():
+                raise serializers.ValidationError(
+                    {"record": "The record is not in your scope."}
+                )
+        return attrs
+
     def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        signed = f"{obj.image.url}?token={sign_media_token(obj.image.name)}"
         request = self.context.get("request")
-        if obj.image and request:
-            return request.build_absolute_uri(obj.image.url)
-        return obj.image.url if obj.image else None
+        if request:
+            return request.build_absolute_uri(signed)
+        return signed
 
 
 class MedicalRecordSerializer(serializers.ModelSerializer):
@@ -87,7 +118,7 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
         return obj.created_by.get_full_name() or obj.created_by.username
 
     def validate(self, attrs):
-        user = getattr(getattr(self.context.get("request"), "user", None), "id", None)
+        user = getattr(self.context.get("request"), "user", None)
         center = attrs.get("center")
         if user and center is not None:
             user_obj = self.context["request"].user
@@ -97,6 +128,7 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"center": "You are not approved to work at this center."}
                 )
+        _validate_patient_scope(self.context, attrs, user, self.instance)
         return attrs
 
     def to_representation(self, instance):
@@ -138,7 +170,7 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
         return obj.doctor.get_full_name() or obj.doctor.username
 
     def validate(self, attrs):
-        user = getattr(getattr(self.context.get("request"), "user", None), "id", None)
+        user = getattr(self.context.get("request"), "user", None)
         center = attrs.get("center")
         if user and center is not None:
             user_obj = self.context["request"].user
@@ -148,6 +180,7 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"center": "You are not approved to work at this center."}
                 )
+        _validate_patient_scope(self.context, attrs, user, self.instance)
         return attrs
 
     def to_representation(self, instance):
