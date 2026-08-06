@@ -1,5 +1,6 @@
 from datetime import date
 import re
+import unicodedata
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
@@ -105,9 +106,17 @@ class PatientSerializer(serializers.ModelSerializer):
         return value
 
     def validate_nss(self, value: str) -> str:
-        if value and not value.isdigit():
+        if not value:
+            return value
+        # NFKC folds fullwidth/halfwidth forms into ASCII (e.g. "１２３" -> "123");
+        # anything that does not fold to ASCII digits (letters, symbols, other
+        # scripts) is rejected, and at most 11 digits are allowed.
+        normalized = unicodedata.normalize("NFKC", str(value))
+        if not normalized.isascii() or not normalized.isdigit():
             raise serializers.ValidationError("NSS must contain digits only.")
-        return value
+        if len(normalized) > 11:
+            raise serializers.ValidationError("NSS must be at most 11 digits.")
+        return normalized
 
     def validate(self, attrs):
         ars = attrs.get("ars")

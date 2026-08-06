@@ -245,6 +245,22 @@ def test_numeric_nss_accepted(auth_client, receptionist_user):
     assert res.status_code == 201, res.data
 
 
+def test_nss_max_11_digits_enforced(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(nss="123456789012"), format="json"
+    )
+    assert res.status_code == 400, res.data
+    assert "nss" in res.data
+
+
+def test_nss_fullwidth_digits_normalized(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(nss="１２３４５６７８９０１"), format="json"
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["nss"] == "12345678901"
+
+
 def test_insurance_fields_all_optional(auth_client, receptionist_user):
     res = auth_client(receptionist_user).post(
         "/api/patients/",
