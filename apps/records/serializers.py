@@ -5,7 +5,7 @@ from PIL import Image
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
-from apps.core.services import sign_media_token, user_accessible_center_ids
+from apps.core.services import is_masked_role, sign_media_token, user_accessible_center_ids
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
@@ -139,6 +139,12 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
             for field in CLINICAL_FIELDS:
                 if data.get(field):
                     data[field] = _mask(str(data[field]))
+        if user and is_masked_role(user):
+            patient_info = data.get("patient_info")
+            if patient_info and patient_info.get("full_name"):
+                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
+            if data.get("created_by_name"):
+                data["created_by_name"] = _mask(str(data["created_by_name"]))
         return data
 
 
@@ -191,4 +197,10 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
             for field in ("subjective", "objective", "assessment", "plan", "notes"):
                 if data.get(field):
                     data[field] = _mask(str(data[field]))
+        if user and is_masked_role(user):
+            patient_info = data.get("patient_info")
+            if patient_info and patient_info.get("full_name"):
+                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
+            if data.get("doctor_name"):
+                data["doctor_name"] = _mask(str(data["doctor_name"]))
         return data

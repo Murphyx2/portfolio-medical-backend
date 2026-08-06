@@ -23,7 +23,7 @@ from apps.core.models import AuditLog
 from apps.patients.models import Patient
 
 FULL_PII = {
-    "phone": "+1-555-0100",
+    "phone": "8095550100",
     "address": "123 Main St, Springfield",
     "email": "jane.doe@example.com",
     "cedula": "010-0108492-0",

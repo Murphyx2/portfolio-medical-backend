@@ -63,6 +63,18 @@ def log_audit(
     )
 
 
+def is_masked_role(user) -> bool:
+    """IT and CENTER_MANAGER see masked PII; all other staff see full PII."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return not (
+        getattr(user, "is_admin", False)
+        or getattr(user, "is_doctor", False)
+        or getattr(user, "is_nurse", False)
+        or getattr(user, "is_receptionist", False)
+    )
+
+
 def client_ip(request) -> str | None:
     xff = request.META.get("HTTP_X_FORWARDED_FOR")
     if xff:

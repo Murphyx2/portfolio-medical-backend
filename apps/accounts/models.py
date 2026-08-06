@@ -24,9 +24,11 @@ class User(AbstractUser):
         if self.role == self.Role.ADMIN:
             self.is_staff = True
             self.is_superuser = True
-        elif self.role == self.Role.IT:
-            # IT manages systems via the API; it must not get Django admin
-            # access (which would expose decrypted PII to a masked role).
+        else:
+            # Every non-ADMIN role is explicitly stripped of Django admin
+            # access. This also clears is_staff/is_superuser when an ADMIN is
+            # demoted to another role (otherwise the demoted account would keep
+            # Django admin, exposing decrypted PII to a non-admin role).
             self.is_staff = False
             self.is_superuser = False
         super().save(*args, **kwargs)

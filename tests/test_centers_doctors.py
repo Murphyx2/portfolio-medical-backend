@@ -7,7 +7,7 @@ def _center_payload(**overrides):
         "name": "Central Health",
         "code": "CH001",
         "address": "1 Hospital Rd",
-        "phone": "555-0001",
+        "phone": "8095550001",
     }
     data.update(overrides)
     return data
@@ -17,7 +17,7 @@ def _doctor_payload(**overrides):
     data = {
         "specialty": "Cardiology",
         "license_number": "LIC-100",
-        "contact_phone": "555-0102",
+        "contact_phone": "8095550102",
     }
     data.update(overrides)
     return data
@@ -28,7 +28,7 @@ def _create_doctor_profile(user):
         user=user,
         specialty="Cardiology",
         license_number=f"LIC-{user.id}",
-        contact_phone="555-0000",
+        contact_phone="8095550000",
     )
 
 

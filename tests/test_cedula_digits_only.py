@@ -33,7 +33,7 @@ def _payload(**overrides):
         "last_name": "Test",
         "birth_date": "1990-05-12",
         "gender": "FEMALE",
-        "phone": "+1-555-0100",
+        "phone": "8095550100",
         "email": "ced@example.com",
     }
     data.update(overrides)
@@ -76,7 +76,7 @@ def test_patch_does_not_touch_cedula_when_absent(auth_client, receptionist_user)
 
     patched = client.patch(
         f"/api/patients/{created.data['id']}/",
-        {"phone": "+1-555-7777"},
+        {"phone": "8095557777"},
         format="json",
     )
     assert patched.status_code == 200, patched.data

@@ -1,14 +1,14 @@
 """Fix P2 / H-04: GET /api/patients/{id}/ PII masking by role.
 
 ADMIN, DOCTOR, NURSE and RECEPTIONIST must see full phone/address/email.
-IT and CENTER_MANAGER must see masked values (e.g. "+1••••99", "jo••••om").
+IT and CENTER_MANAGER must see masked values (e.g. "80••••00", "jo••••om").
 """
 
 from apps.patients.models import Patient
 
 MASK = "••••"
 FULL = {
-    "phone": "+1-555-0100",
+    "phone": "8095550100",
     "address": "123 Main St, Springfield",
     "email": "jane.doe@example.com",
 }
@@ -51,7 +51,7 @@ def test_it_sees_masked_pii(auth_client, it_user, receptionist_user):
     patient = _make_patient()
     data = _masked(patient.id, auth_client, it_user)
     # exact masking shape: "xx••••yy"
-    assert data["phone"].startswith("+1") and data["phone"].endswith("00")
+    assert data["phone"].startswith("80") and data["phone"].endswith("00")
     assert data["email"].startswith("ja") and data["email"].endswith("om")
     assert data["address"].startswith("12") and data["address"].endswith("ld")
 

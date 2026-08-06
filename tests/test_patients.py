@@ -10,7 +10,7 @@ def _patient_payload(**overrides):
         "last_name": "Doe",
         "birth_date": "1990-05-12",
         "gender": "FEMALE",
-        "phone": "+1-555-0100",
+        "phone": "8095550100",
         "address": "123 Main St, Springfield",
         "email": "jane.doe@example.com",
     }
@@ -24,7 +24,7 @@ def test_create_patient_by_receptionist(auth_client, receptionist_user):
     )
     assert res.status_code == 201
     patient = Patient.objects.get(pk=res.data["id"])
-    assert patient.phone == "+1-555-0100"
+    assert patient.phone == "8095550100"
 
 
 def test_patient_pii_is_encrypted_at_rest(auth_client, receptionist_user):
@@ -41,7 +41,7 @@ def test_patient_pii_is_encrypted_at_rest(auth_client, receptionist_user):
     assert is_encrypted(raw_fn)
     assert is_encrypted(raw_ln)
     assert is_encrypted(raw_bd)
-    assert "+1-555-0100" not in raw_phone
+    assert "8095550100" not in raw_phone
     assert "Jane" not in raw_fn
 
 
@@ -54,7 +54,7 @@ def test_doctor_can_read_full_pii(auth_client, doctor_user, receptionist_user):
     res = auth_client(doctor_user).get("/api/patients/")
     assert res.status_code == 200
     result = res.data["results"][0]
-    assert result["phone"] == "+1-555-0100"
+    assert result["phone"] == "8095550100"
     assert result["email"] == "jane.doe@example.com"
 
 
@@ -63,7 +63,7 @@ def test_it_sees_redacted_pii(auth_client, it_user, receptionist_user):
     res = auth_client(it_user).get("/api/patients/")
     assert res.status_code == 200
     result = res.data["results"][0]
-    assert result["phone"] != "+1-555-0100"
+    assert result["phone"] != "8095550100"
     assert "555" not in result["phone"]
 
 
@@ -81,8 +81,8 @@ def test_update_patient_keeps_encryption(auth_client, receptionist_user):
     pid = created.data["id"]
     res = auth_client(receptionist_user).patch(
         f"/api/patients/{pid}/",
-        {"phone": "+1-555-0999"},
+        {"phone": "8095550999"},
         format="json",
     )
     assert res.status_code == 200
-    assert Patient.objects.get(pk=pid).phone == "+1-555-0999"
+    assert Patient.objects.get(pk=pid).phone == "8095550999"

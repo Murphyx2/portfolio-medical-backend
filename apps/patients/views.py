@@ -5,7 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import PatientDataPermission
-from apps.core.services import user_accessible_center_ids
+from apps.core.services import is_masked_role, user_accessible_center_ids
 from apps.patients.models import Patient
 from apps.patients.serializers import PatientSerializer
 
@@ -21,6 +21,12 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
+        if is_masked_role(user):
+            # IT/CENTER_MANAGER must not be able to confirm whether a specific
+            # name is a patient (plaintext search_name would defeat display
+            # masking and act as a PII-existence oracle).
+            self.search_fields = []
+            self.filterset_fields = ["gender", "ars", "center"]
         if getattr(user, "is_doctor", False):
             center_ids = user_accessible_center_ids(user)
             # Centerless patients are unbound (visible); center-bound patients

@@ -9,7 +9,7 @@ def _profile_payload(user_id, **overrides):
         "user": user_id,
         "specialty": "Cardiology",
         "license_number": "LIC-DUP-1",
-        "contact_phone": "555-0102",
+        "contact_phone": "8095550102",
     }
     data.update(overrides)
     return data

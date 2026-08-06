@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
+from apps.core.validators import validate_phone
 
 
 class MedicalCenterSerializer(serializers.ModelSerializer):
@@ -9,6 +10,9 @@ class MedicalCenterSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalCenter
         fields = ["id", "name", "code", "address", "phone", "email", "doctor_count"]
+
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
 
 
 class DoctorCenterBindingSerializer(serializers.ModelSerializer):

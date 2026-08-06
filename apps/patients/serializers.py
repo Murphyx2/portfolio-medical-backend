@@ -1,8 +1,12 @@
 from datetime import date
 import re
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from rest_framework import serializers
 
+from apps.core.services import is_masked_role
+from apps.core.validators import validate_phone
 from apps.patients.models import Patient
 
 
@@ -75,6 +79,31 @@ class PatientSerializer(serializers.ModelSerializer):
             return digits
         return value
 
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
+
+    def validate_email(self, value: str) -> str:
+        if not value:
+            return value
+        try:
+            validate_email(value)
+        except DjangoValidationError:
+            raise serializers.ValidationError("Enter a valid email address.")
+        return value
+
+    def validate_birth_date(self, value: str) -> str:
+        if not value:
+            return value
+        try:
+            bd = date.fromisoformat(value)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                "Birth date must be a valid date (YYYY-MM-DD)."
+            )
+        if bd > date.today():
+            raise serializers.ValidationError("Birth date cannot be in the future.")
+        return value
+
     def validate_nss(self, value: str) -> str:
         if value and not value.isdigit():
             raise serializers.ValidationError("NSS must contain digits only.")
@@ -106,9 +135,7 @@ class PatientSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        if user and user.is_authenticated and not (
-            user.is_admin or user.is_doctor or user.is_nurse or user.is_receptionist
-        ):
+        if user and user.is_authenticated and is_masked_role(user):
             # IT and center managers see redacted contact PII, identifiers,
             # and names/birth date.
             for field in ("phone", "address", "email", "cedula", "nss"):

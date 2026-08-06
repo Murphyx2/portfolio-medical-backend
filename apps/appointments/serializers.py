@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.appointments.models import Appointment
+from apps.core.services import is_masked_role
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.doctors.models import DoctorProfile
@@ -65,7 +66,12 @@ class AppointmentSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        if user and user.is_it:
+        if user and is_masked_role(user):
+            patient_info = data.get("patient_info")
+            if patient_info and patient_info.get("full_name"):
+                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
+            if data.get("created_by_name"):
+                data["created_by_name"] = _mask(str(data["created_by_name"]))
             if data.get("notes"):
                 data["notes"] = _mask(str(data["notes"]))
         return data

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
+from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
 
 
@@ -28,6 +29,9 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "contact_email",
             "bio",
         ]
+
+    def validate_contact_phone(self, value: str) -> str:
+        return validate_phone(value)
 
     def validate_user(self, value):
         if self.instance and self.instance.user_id == value.id:

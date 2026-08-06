@@ -144,7 +144,7 @@ class ProtectedMediaView(APIView):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         media_root = Path(settings.MEDIA_ROOT).resolve()
         full = (media_root / file_path).resolve()
-        if not str(full).startswith(str(media_root)) or not full.is_file():
+        if not full.is_relative_to(media_root) or not full.is_file():
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         content_type = mimetypes.guess_type(full.name)[0] or "application/octet-stream"
         return FileResponse(full.open("rb"), content_type=content_type)
