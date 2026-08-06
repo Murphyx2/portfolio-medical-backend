@@ -7,8 +7,9 @@
 - Nested writable programs are reconciled on create/update (PATCH removes
   programs not sent).
 - Patient insurance: ars + matching ars_program accepted (201, echoes names);
-  program from a different ARS rejected (400); cedula format enforced;
-  nss digits-only enforced; all insurance fields optional.
+  program from a different ARS rejected (400); cedula stored digits-only and
+  must have exactly 11 digits; nss digits-only enforced; all insurance fields
+  optional.
 - PII masking: ADMIN/DOCTOR/NURSE/RECEPTIONIST see full
   phone/address/email/cedula/nss; IT and CENTER_MANAGER see redacted ("•").
 - Audit: ARS create by receptionist logs AuditLog(CREATE, ARS); a real
@@ -191,7 +192,7 @@ def test_patient_with_matching_ars_program(auth_client, receptionist_user):
     assert res.data["ars_name"] == "SEMMA"
     assert res.data["ars_program"] == program.id
     assert res.data["ars_program_name"] == "P Y P SEMMA"
-    assert res.data["cedula"] == "010-0108492-0"
+    assert res.data["cedula"] == "01001084920"
     assert res.data["nss"] == "123456789"
 
 
@@ -207,19 +208,26 @@ def test_patient_program_from_different_ars_rejected(auth_client, receptionist_u
     assert "ars_program" in res.data
 
 
-def test_invalid_cedula_format_rejected(auth_client, receptionist_user):
+def test_invalid_cedula_length_rejected(auth_client, receptionist_user):
     res = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(cedula="010-0108492"), format="json"
     )
     assert res.status_code == 400, res.data
     assert "cedula" in res.data
 
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(cedula="010010849201"), format="json"
+    )
+    assert res.status_code == 400, res.data
+    assert "cedula" in res.data
 
-def test_valid_cedula_accepted(auth_client, receptionist_user):
+
+def test_cedula_stored_digits_only(auth_client, receptionist_user):
     res = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(cedula="010-0108492-0"), format="json"
     )
     assert res.status_code == 201, res.data
+    assert res.data["cedula"] == "01001084920"
 
 
 def test_non_numeric_nss_rejected(auth_client, receptionist_user):

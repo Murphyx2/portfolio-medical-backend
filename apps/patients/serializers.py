@@ -14,9 +14,6 @@ def _mask(value: str) -> str:
     return f"{value[:2]}••••{value[-2:]}"
 
 
-CEDULA_RE = re.compile(r"^\d{3}-\d{7}-\d{1}$")
-
-
 class PatientSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
@@ -60,10 +57,13 @@ class PatientSerializer(serializers.ModelSerializer):
         )
 
     def validate_cedula(self, value: str) -> str:
-        if value and not CEDULA_RE.match(value):
-            raise serializers.ValidationError(
-                "Cedula must be in the format 000-0000000-0."
-            )
+        if value:
+            digits = re.sub(r"\D", "", value)
+            if len(digits) != 11:
+                raise serializers.ValidationError(
+                    "Cedula must contain exactly 11 digits."
+                )
+            return digits
         return value
 
     def validate_nss(self, value: str) -> str:
