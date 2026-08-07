@@ -32,6 +32,12 @@ class Patient(TimestampedModel):
     cedula = EncryptedCharField(blank=True)
     nss = EncryptedCharField(blank=True)
 
+    # Plaintext last-4-digit index of cedula/NSS (same documented tradeoff as
+    # `search_name`): digit searches match in SQL against these columns instead
+    # of decrypting every row in Python (M-01).
+    cedula_last4 = models.CharField(max_length=4, blank=True, db_index=True)
+    nss_last4 = models.CharField(max_length=4, blank=True, db_index=True)
+
     # Center where the patient is registered (null = unbound/visible to all staff).
     center = models.ForeignKey(
         "centers.MedicalCenter",
@@ -65,6 +71,8 @@ class Patient(TimestampedModel):
 
     def save(self, *args, **kwargs):
         self.search_name = f"{self.first_name or ''} {self.last_name or ''}".strip().lower()
+        self.cedula_last4 = (self.cedula or "")[-4:]
+        self.nss_last4 = (self.nss or "")[-4:]
         super().save(*args, **kwargs)
 
     @property

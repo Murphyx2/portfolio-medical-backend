@@ -1,10 +1,11 @@
 from django.contrib import admin
 
 from apps.ars.models import ARS, ARSProgram
+from apps.core.admin import AuditModelAdmin
 
 
 @admin.register(ARS)
-class ARSAdmin(admin.ModelAdmin):
+class ARSAdmin(AuditModelAdmin):
     list_display = ("ars_id", "name", "program_count")
     search_fields = ("ars_id", "name")
 
@@ -14,6 +15,6 @@ class ARSAdmin(admin.ModelAdmin):
 
 
 @admin.register(ARSProgram)
-class ARSProgramAdmin(admin.ModelAdmin):
+class ARSProgramAdmin(AuditModelAdmin):
     list_display = ("name", "ars")
     list_filter = ("ars",)

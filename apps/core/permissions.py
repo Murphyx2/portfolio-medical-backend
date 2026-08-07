@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from apps.accounts.models import User
+from apps.core.services import user_accessible_center_ids
 
 
 class IsAdmin(BasePermission):
@@ -67,7 +68,13 @@ class IsDoctorOrNurse(BasePermission):
 
 
 class CanManageRecords(BasePermission):
-    """Doctors, nurses, and admins may create/update medical records."""
+    """Doctors, nurses, and admins may create/update medical records.
+
+    Object-level checks (M-02): updates/deletes stay inside the actor's scope —
+    admins anywhere; doctors in their approved centers (or records they
+    created); nurses only on records they created (the data model has no
+    nurse-to-center relationship yet, so "own records" is the safest scope).
+    """
 
     def has_permission(self, request, view):
         return bool(
@@ -79,6 +86,25 @@ class CanManageRecords(BasePermission):
                 or request.user.is_admin
             )
         )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        if getattr(user, "is_admin", False):
+            return True
+        owner_id = getattr(obj, "created_by_id", None)
+        if owner_id is None:
+            owner_id = getattr(obj, "uploaded_by_id", None)
+        if owner_id is None:
+            owner_id = getattr(obj, "doctor_id", None)
+        if getattr(user, "is_doctor", False):
+            center_ids = user_accessible_center_ids(user)
+            center_id = getattr(obj, "center_id", None)
+            return center_id in center_ids or owner_id == user.id
+        if getattr(user, "is_nurse", False):
+            return owner_id == user.id
+        return False
 
 
 class IsStaffUser(BasePermission):

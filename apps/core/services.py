@@ -1,9 +1,33 @@
 from django.core.signing import BadSignature, TimestampSigner
+from django.db.models import Q
 
 from apps.core.models import AuditLog
 
 # How long a signed media URL stays valid (seconds).
 MEDIA_TOKEN_MAX_AGE = 60 * 60
+
+
+def patient_ids_matching_digits(term: str) -> list[int]:
+    """Patient ids whose cedula/NSS trailing digits match a search term.
+
+    Non-digit characters (spaces, hyphens from the formatted display like
+    ``001-1234567-8``) are stripped before matching. The match runs in SQL on
+    the plaintext ``cedula_last4``/``nss_last4`` index columns (M-01) so a
+    digit search never has to decrypt every row in Python: terms of 4+ digits
+    compare against the stored last-4 exactly, shorter terms use a substring
+    match on those columns.
+    """
+    digits = "".join(ch for ch in term if ch.isdigit())
+    if not digits:
+        return []
+    tail = digits[-4:]
+    from apps.patients.models import Patient
+
+    if len(digits) >= 4:
+        q = Q(cedula_last4=tail) | Q(nss_last4=tail)
+    else:
+        q = Q(cedula_last4__icontains=tail) | Q(nss_last4__icontains=tail)
+    return list(Patient.objects.filter(q).values_list("id", flat=True))
 
 
 def sign_media_token(file_path: str) -> str:

@@ -67,6 +67,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.core.middleware.NoStoreMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -149,7 +150,7 @@ SIMPLE_JWT = {
         minutes=int(env("JWT_ACCESS_LIFETIME_MINUTES", "15"))
     ),
     "REFRESH_TOKEN_LIFETIME": timedelta(
-        days=int(env("JWT_REFRESH_LIFETIME_DAYS", "7"))
+        days=int(env("JWT_REFRESH_LIFETIME_DAYS", "3"))
     ),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,

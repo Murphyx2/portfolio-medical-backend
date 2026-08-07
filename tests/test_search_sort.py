@@ -62,12 +62,19 @@ def test_patient_search_terms_are_and_ed(auth_client, admin_user, mixed_patients
 
 
 def test_patient_search_by_cedula(auth_client, admin_user, mixed_patients):
-    res = auth_client(admin_user).get("/api/patients/?search=0100108492&page_size=20")
+    # Full cedula search matches via the plaintext last-4 index (M-01).
+    res = auth_client(admin_user).get("/api/patients/?search=01001084920&page_size=20")
     assert {r["full_name"] for r in res.data["results"]} == {"Ana Perez"}
 
 
+def test_patient_search_by_last4(auth_client, admin_user, mixed_patients):
+    # Searching by the trailing digits alone also matches (index column).
+    res = auth_client(admin_user).get("/api/patients/?search=5678&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Luis Perez"}
+
+
 def test_patient_search_by_nss(auth_client, admin_user, mixed_patients):
-    res = auth_client(admin_user).get("/api/patients/?search=555444333&page_size=20")
+    res = auth_client(admin_user).get("/api/patients/?search=55544433321&page_size=20")
     assert {r["full_name"] for r in res.data["results"]} == {"Ana Lopez"}
 
 
@@ -83,6 +90,16 @@ def test_patient_search_disabled_for_masked_role(auth_client, it_user, mixed_pat
     res = auth_client(it_user).get("/api/patients/?search=perez&page_size=20")
     assert res.status_code == 200
     assert res.data["count"] == 3  # search ignored, list unfiltered
+
+
+def test_patient_last4_index_populated_on_save(db):
+    # The plaintext last-4 columns are maintained on every save so digit search
+    # never has to decrypt the full cedula/NSS (M-01).
+    p = Patient.objects.create(
+        first_name="A", last_name="B", cedula="00112345678", nss="98765432109"
+    )
+    assert p.cedula_last4 == "5678"
+    assert p.nss_last4 == "2109"
 
 
 # ---------------------------------------------------------------------------
@@ -165,14 +182,14 @@ def test_record_search_by_patient_name(auth_client, doctor_user, records_setup):
 
 
 def test_record_search_by_patient_cedula(auth_client, doctor_user, records_setup):
-    res = auth_client(doctor_user).get("/api/medical-records/?search=0100108492")
+    res = auth_client(doctor_user).get("/api/medical-records/?search=01001084920")
     assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
         "Ana Perez"
     }
 
 
 def test_record_search_by_patient_nss(auth_client, doctor_user, records_setup):
-    res = auth_client(doctor_user).get("/api/medical-records/?search=987654321")
+    res = auth_client(doctor_user).get("/api/medical-records/?search=98765432109")
     assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
         "Luis Perez"
     }

@@ -1,6 +1,32 @@
 from django.contrib import admin
 
 from apps.core.models import AuditLog
+from apps.core.services import client_ip, log_audit
+
+
+class AuditModelAdmin(admin.ModelAdmin):
+    """ModelAdmin base mirroring the DRF ``AuditMixin`` (M-07): every add,
+    change, or delete made through Django admin is written to the app's
+    AuditLog, so admin edits no longer bypass the audit trail.
+    """
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        log_audit(
+            user=request.user,
+            action="CREATE" if not change else "UPDATE",
+            target=obj,
+            ip_address=client_ip(request),
+        )
+
+    def delete_model(self, request, obj):
+        log_audit(
+            user=request.user,
+            action="DELETE",
+            target=obj,
+            ip_address=client_ip(request),
+        )
+        super().delete_model(request, obj)
 
 
 @admin.register(AuditLog)

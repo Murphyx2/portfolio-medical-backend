@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.centers.models import DoctorCenterBinding
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
+from apps.patients.serializers import _mask
 
 
 class DoctorProfileSerializer(serializers.ModelSerializer):
@@ -29,6 +30,22 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "contact_email",
             "bio",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request") if self.context else None
+        user = getattr(request, "user", None) if request else None
+        is_self = bool(user and instance.user_id == getattr(user, "id", None))
+        if user and not (user.is_admin or user.is_it) and not is_self:
+            # Doctor contact PII (M-03) is only for admins/IT and the doctor
+            # themself; other staff keep name/specialty but see masked contact.
+            if data.get("license_number"):
+                data["license_number"] = _mask(str(data["license_number"]))
+            if data.get("contact_phone"):
+                data["contact_phone"] = _mask(str(data["contact_phone"]))
+            data["contact_email"] = None
+            data["bio"] = None
+        return data
 
     def validate_contact_phone(self, value: str) -> str:
         return validate_phone(value)

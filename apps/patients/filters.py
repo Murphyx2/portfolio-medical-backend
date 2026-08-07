@@ -3,30 +3,8 @@ from datetime import date
 from django.db.models import Q
 from rest_framework.filters import SearchFilter
 
-from apps.core.services import is_masked_role
+from apps.core.services import is_masked_role, patient_ids_matching_digits
 from apps.patients.models import Patient
-
-
-def _patient_ids_matching_digits(term: str) -> list[int]:
-    """Match a digit-containing term against decrypted cedula/NSS values.
-
-    Non-digit characters (spaces, hyphens from the formatted display like
-    ``001-1234567-8``) are stripped before matching, since cedula/NSS are stored
-    as digits only.
-
-    Cedula/NSS are Fernet-encrypted at rest, so the match happens in Python
-    after decryption (a full-table scan). This is acceptable for an internal
-    tool at current scale; a plaintext last-4-digit index would be the path if
-    the dataset grows very large.
-    """
-    digits = "".join(ch for ch in term if ch.isdigit())
-    if not digits:
-        return []
-    matched = []
-    for patient in Patient.objects.all().only("id", "cedula", "nss"):
-        if digits in (patient.cedula or "") or digits in (patient.nss or ""):
-            matched.append(patient.id)
-    return matched
 
 
 def patient_age(patient) -> int | None:
@@ -49,7 +27,7 @@ def patient_age(patient) -> int | None:
 
 class PatientSearchFilter(SearchFilter):
     """Search patients by name (plaintext search_name index) and, when the
-    query contains digits, by decrypted cedula/NSS.
+    query contains digits, by the cedula/NSS last-4 index.
 
     Multiple terms are AND-ed. Masked roles (IT/CENTER_MANAGER) are exempt so a
     search cannot act as a PII existence oracle.
@@ -70,6 +48,6 @@ class PatientSearchFilter(SearchFilter):
         for term in terms:
             term_q = Q(search_name__icontains=term)
             if any(ch.isdigit() for ch in term):
-                term_q |= Q(id__in=_patient_ids_matching_digits(term))
+                term_q |= Q(id__in=patient_ids_matching_digits(term))
             q &= term_q
         return queryset.filter(q).distinct()
