@@ -10,7 +10,7 @@ def test_login_success(api_client, admin_user):
         format="json",
     )
     assert res.status_code == 200
-    assert "access" in res.data and "refresh" in res.data
+    assert "access" in res.data and "refresh" not in res.data
     assert res.data["user"]["role"] == "ADMIN"
 
 

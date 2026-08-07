@@ -338,7 +338,7 @@ def test_audit_logs_login_and_logout(api_client, make_user):
 
     logout = api_client.post(
         "/api/auth/logout/",
-        {"refresh": login.data["refresh"]},
+        {},
         HTTP_AUTHORIZATION=f"Bearer {login.data['access']}",
         format="json",
     )

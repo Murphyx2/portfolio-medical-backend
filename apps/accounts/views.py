@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -6,7 +7,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.serializers import (
@@ -20,6 +22,26 @@ from apps.core.permissions import IsAdminOrIT
 from apps.core.services import client_ip, log_audit
 
 User = get_user_model()
+
+
+def _set_refresh_cookie(response, refresh):
+    response.set_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        refresh,
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        path=settings.REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response):
+    response.delete_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        path=settings.REFRESH_COOKIE_PATH,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+    )
 
 
 class LoginThrottle(AnonRateThrottle):
@@ -63,11 +85,12 @@ class LoginView(APIView):
         data = LoginResponseSerializer(
             {
                 "access": str(refresh.access_token),
-                "refresh": str(refresh),
                 "user": user,
             }
         ).data
-        return Response(data, status=status.HTTP_200_OK)
+        response = Response(data, status=status.HTTP_200_OK)
+        _set_refresh_cookie(response, str(refresh))
+        return response
 
 
 class MeView(APIView):
@@ -77,13 +100,47 @@ class MeView(APIView):
         return Response(UserSerializer(request.user).data)
 
 
+class CookieTokenRefreshView(APIView):
+    """Rotate the refresh token carried in the httpOnly cookie.
+
+    Returns only a fresh access token in the body; the rotated refresh token is
+    delivered exclusively via the cookie (H-03: never exposed to JS). SimpleJWT
+    blacklists the previous refresh on rotation.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if not refresh:
+            return Response(
+                {"detail": "No refresh token cookie present."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        serializer = TokenRefreshSerializer(
+            data={"refresh": refresh},
+            context={"request": request},
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as exc:
+            # SimpleJWT raises a plain TokenError for invalid/blacklisted/
+            # expired refreshes; Surface as a 401 API exception.
+            raise InvalidToken(exc.args[0]) from exc
+        response = Response({"access": serializer.validated_data["access"]})
+        new_refresh = serializer.validated_data.get("refresh")
+        if new_refresh:
+            _set_refresh_cookie(response, new_refresh)
+        return response
+
+
 class LogoutView(APIView):
-    """Revoke the presented refresh token so it can no longer be replayed."""
+    """Revoke the refresh token in the cookie so it can no longer be replayed."""
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        refresh = request.data.get("refresh")
+        refresh = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not refresh:
             return Response(
                 {"detail": "A refresh token is required."},
@@ -102,7 +159,9 @@ class LogoutView(APIView):
             action="LOGOUT",
             ip_address=client_ip(request),
         )
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        _clear_refresh_cookie(response)
+        return response
 
 
 class UserViewSet(AuditMixin, viewsets.ModelViewSet):

@@ -157,6 +157,20 @@ SIMPLE_JWT = {
 }
 
 # ------------------------------------------------------------------
+# Refresh-token cookie (H-03): keep the refresh token out of JS-accessible
+# storage. The SPA holds only the short-lived access token in memory; the
+# refresh token travels in this httpOnly SameSite=Strict cookie, scoped to the
+# auth endpoints, and is rotated on every use.
+# ------------------------------------------------------------------
+REFRESH_COOKIE_NAME = env("DJANGO_REFRESH_COOKIE_NAME", "mc_refresh")
+REFRESH_COOKIE_MAX_AGE = int(
+    timedelta(days=int(env("JWT_REFRESH_LIFETIME_DAYS", "3"))).total_seconds()
+)
+REFRESH_COOKIE_SECURE = env_bool("DJANGO_REFRESH_COOKIE_SECURE", "false")
+REFRESH_COOKIE_SAMESITE = "Strict"
+REFRESH_COOKIE_PATH = "/api/auth/"
+
+# ------------------------------------------------------------------
 # CORS
 # ------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = [
@@ -164,7 +178,10 @@ CORS_ALLOWED_ORIGINS = [
     for o in env("DJANGO_CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
     if o.strip()
 ]
-CORS_ALLOW_CREDENTIALS = False
+# The SPA (localhost:5173) sends/receives the refresh cookie across origin,
+# so credentialed CORS is required. SameSite=Strict still protects the cookie
+# against cross-site (CSRF) requests.
+CORS_ALLOW_CREDENTIALS = env_bool("DJANGO_CORS_ALLOW_CREDENTIALS", "true")
 
 # ------------------------------------------------------------------
 # i18n / static / media

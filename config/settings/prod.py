@@ -48,3 +48,11 @@ SECURE_HSTS_PRELOAD = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
+
+# Refresh cookie must be Secure over TLS in production (default on).
+REFRESH_COOKIE_SECURE = env("DJANGO_REFRESH_COOKIE_SECURE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
