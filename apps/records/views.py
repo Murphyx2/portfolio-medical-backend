@@ -5,7 +5,9 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
+from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,6 +19,7 @@ from apps.core.permissions import (
     IsStaffUser,
 )
 from apps.core.services import client_ip, log_audit, user_accessible_center_ids
+from apps.records.filters import RecordSearchFilter
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
     ConsultationLogSerializer,
@@ -31,8 +34,9 @@ class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
     ).prefetch_related("images")
     serializer_class = MedicalRecordSerializer
     permission_classes = [IsStaffUser]
+    filter_backends = [DjangoFilterBackend, RecordSearchFilter, OrderingFilter]
     filterset_fields = ["patient", "center", "title"]
-    search_fields = ["title", "patient__first_name", "patient__last_name"]
+    ordering_fields = ["date", "title", "patient__search_name", "created_by__username"]
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:

@@ -33,7 +33,7 @@ class PatientLiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Patient
-        fields = ["id", "full_name", "gender"]
+        fields = ["id", "full_name", "gender", "cedula", "nss"]
 
 
 class RecordImageSerializer(serializers.ModelSerializer):
@@ -143,6 +143,9 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
             patient_info = data.get("patient_info")
             if patient_info and patient_info.get("full_name"):
                 patient_info["full_name"] = _mask(str(patient_info["full_name"]))
+            for field in ("cedula", "nss"):
+                if patient_info and patient_info.get(field):
+                    patient_info[field] = _mask(str(patient_info[field]))
             if data.get("created_by_name"):
                 data["created_by_name"] = _mask(str(data["created_by_name"]))
         return data
@@ -201,6 +204,9 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
             patient_info = data.get("patient_info")
             if patient_info and patient_info.get("full_name"):
                 patient_info["full_name"] = _mask(str(patient_info["full_name"]))
+            for field in ("cedula", "nss"):
+                if patient_info and patient_info.get(field):
+                    patient_info[field] = _mask(str(patient_info[field]))
             if data.get("doctor_name"):
                 data["doctor_name"] = _mask(str(data["doctor_name"]))
         return data

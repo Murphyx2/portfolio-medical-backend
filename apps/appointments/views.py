@@ -1,6 +1,8 @@
 from django.db import transaction
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
@@ -17,7 +19,21 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     )
     serializer_class = AppointmentSerializer
     permission_classes = [IsStaffUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["patient", "doctor", "center", "status", "date_time"]
+    search_fields = [
+        "patient__search_name",
+        "doctor__user__last_name",
+        "center__name",
+        "status",
+    ]
+    ordering_fields = [
+        "date_time",
+        "patient__search_name",
+        "doctor__user__last_name",
+        "center__name",
+        "status",
+    ]
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:

@@ -1,5 +1,7 @@
 from django.db import IntegrityError
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import serializers, viewsets
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 
 from apps.core.mixins import AuditMixin
@@ -12,7 +14,24 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = DoctorProfile.objects.select_related("user").all()
     serializer_class = DoctorProfileSerializer
     permission_classes = [IsStaffUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["specialty", "user"]
+    search_fields = [
+        "user__first_name",
+        "user__last_name",
+        "license_number",
+        "specialty",
+        "contact_email",
+        "contact_phone",
+    ]
+    ordering_fields = [
+        "user__last_name",
+        "user__first_name",
+        "specialty",
+        "license_number",
+        "contact_email",
+        "contact_phone",
+    ]
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:

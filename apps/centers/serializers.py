@@ -5,7 +5,7 @@ from apps.core.validators import validate_phone
 
 
 class MedicalCenterSerializer(serializers.ModelSerializer):
-    doctor_count = serializers.IntegerField(source="doctor_bindings.count", read_only=True)
+    doctor_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = MedicalCenter

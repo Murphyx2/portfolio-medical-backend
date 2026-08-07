@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
@@ -109,6 +110,9 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
 
     queryset = User.objects.all().order_by("username")
     permission_classes = [IsAdminOrIT]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["username", "email", "first_name", "last_name"]
+    ordering_fields = ["username", "first_name", "email", "role", "is_active"]
 
     def get_serializer_class(self):
         if self.action == "create":
