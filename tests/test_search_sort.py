@@ -71,6 +71,13 @@ def test_patient_search_by_nss(auth_client, admin_user, mixed_patients):
     assert {r["full_name"] for r in res.data["results"]} == {"Ana Lopez"}
 
 
+def test_patient_search_by_formatted_cedula(auth_client, admin_user, mixed_patients):
+    # The Records page displays cedula formatted (001-1234567-8); searching that
+    # exact string must still find the patient (non-digits stripped before match).
+    res = auth_client(admin_user).get("/api/patients/?search=001-1234567-8&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Luis Perez"}
+
+
 def test_patient_search_disabled_for_masked_role(auth_client, it_user, mixed_patients):
     # IT must not be able to probe whether a name/cedula/nss is a patient.
     res = auth_client(it_user).get("/api/patients/?search=perez&page_size=20")
@@ -166,6 +173,15 @@ def test_record_search_by_patient_cedula(auth_client, doctor_user, records_setup
 
 def test_record_search_by_patient_nss(auth_client, doctor_user, records_setup):
     res = auth_client(doctor_user).get("/api/medical-records/?search=987654321")
+    assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
+        "Luis Perez"
+    }
+
+
+def test_record_search_by_formatted_cedula(auth_client, doctor_user, records_setup):
+    # Same normalization as the Patients page: formatted cedula with hyphens
+    # must find the record through the patient's decrypted cedula.
+    res = auth_client(doctor_user).get("/api/medical-records/?search=001-1234567-8")
     assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
         "Luis Perez"
     }

@@ -10,14 +10,21 @@ from apps.patients.models import Patient
 def _patient_ids_matching_digits(term: str) -> list[int]:
     """Match a digit-containing term against decrypted cedula/NSS values.
 
+    Non-digit characters (spaces, hyphens from the formatted display like
+    ``001-1234567-8``) are stripped before matching, since cedula/NSS are stored
+    as digits only.
+
     Cedula/NSS are Fernet-encrypted at rest, so the match happens in Python
     after decryption (a full-table scan). This is acceptable for an internal
     tool at current scale; a plaintext last-4-digit index would be the path if
     the dataset grows very large.
     """
+    digits = "".join(ch for ch in term if ch.isdigit())
+    if not digits:
+        return []
     matched = []
     for patient in Patient.objects.all().only("id", "cedula", "nss"):
-        if term in (patient.cedula or "") or term in (patient.nss or ""):
+        if digits in (patient.cedula or "") or digits in (patient.nss or ""):
             matched.append(patient.id)
     return matched
 

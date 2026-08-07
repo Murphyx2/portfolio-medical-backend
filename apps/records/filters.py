@@ -6,10 +6,18 @@ from apps.patients.models import Patient
 
 
 def _patient_ids_matching_digits(term: str) -> list[int]:
-    """Records whose patient's decrypted cedula/NSS contains the term."""
+    """Records whose patient's decrypted cedula/NSS contains the term.
+
+    Non-digit characters (spaces, hyphens from the formatted display like
+    ``001-1234567-8``) are stripped before matching, since cedula/NSS are stored
+    as digits only.
+    """
+    digits = "".join(ch for ch in term if ch.isdigit())
+    if not digits:
+        return []
     matched = []
     for patient in Patient.objects.all().only("id", "cedula", "nss"):
-        if term in (patient.cedula or "") or term in (patient.nss or ""):
+        if digits in (patient.cedula or "") or digits in (patient.nss or ""):
             matched.append(patient.id)
     return matched
 
