@@ -264,7 +264,7 @@ def test_nss_fullwidth_digits_normalized(auth_client, receptionist_user):
 def test_insurance_fields_all_optional(auth_client, receptionist_user):
     res = auth_client(receptionist_user).post(
         "/api/patients/",
-        _patient_payload(cedula="", nss="", ars=None, ars_program=None),
+        _patient_payload(cedula="01099999999", nss="", ars=None, ars_program=None),
         format="json",
     )
     assert res.status_code == 201, res.data
@@ -272,7 +272,7 @@ def test_insurance_fields_all_optional(auth_client, receptionist_user):
     assert res.data["ars_name"] is None
     assert res.data["ars_program"] is None
     assert res.data["ars_program_name"] is None
-    assert res.data["cedula"] == ""
+    assert res.data["cedula"] == "01099999999"
     assert res.data["nss"] == ""
 
 

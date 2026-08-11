@@ -18,6 +18,7 @@ def _patient_payload(**overrides):
         "phone": "8095550100",
         "address": "123 Main St, Springfield",
         "email": "jane.doe@example.com",
+        "cedula": "01098765432",
     }
     data.update(overrides)
     return data
