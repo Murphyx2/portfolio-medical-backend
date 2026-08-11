@@ -54,6 +54,13 @@ class PatientSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
+    def get_fields(self):
+        fields = super().get_fields()
+        if self.instance is None:
+            fields["cedula"].required = True
+            fields["cedula"].allow_blank = False
+        return fields
+
     def get_age(self, obj) -> int | None:
         if not obj.birth_date:
             return None

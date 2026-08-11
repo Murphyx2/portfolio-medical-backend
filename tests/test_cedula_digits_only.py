@@ -50,7 +50,7 @@ def test_plain_11_digit_cedula_accepted_unchanged(auth_client, receptionist_user
 
 def test_patch_cedula_normalized_to_digits_only(auth_client, receptionist_user):
     client = auth_client(receptionist_user)
-    created = client.post("/api/patients/", _payload(), format="json")
+    created = client.post("/api/patients/", _payload(cedula=DIGITS), format="json")
     assert created.status_code == 201, created.data
 
     patched = client.patch(
@@ -108,12 +108,28 @@ def test_cedula_with_extra_whitespace_still_accepted(auth_client, receptionist_u
     assert res.data["cedula"] == DIGITS
 
 
-def test_empty_cedula_still_allowed(auth_client, receptionist_user):
+def test_empty_cedula_rejected_on_create(auth_client, receptionist_user):
     res = auth_client(receptionist_user).post(
         "/api/patients/", _payload(cedula=""), format="json"
     )
-    assert res.status_code == 201, res.data
-    assert res.data["cedula"] == ""
+    assert res.status_code == 400, res.data
+    assert "cedula" in res.data
+
+
+def test_empty_cedula_still_allowed_on_update(auth_client, receptionist_user):
+    client = auth_client(receptionist_user)
+    created = client.post(
+        "/api/patients/", _payload(cedula=DIGITS), format="json"
+    )
+    assert created.status_code == 201, created.data
+
+    patched = client.patch(
+        f"/api/patients/{created.data['id']}/",
+        {"cedula": ""},
+        format="json",
+    )
+    assert patched.status_code == 200, patched.data
+    assert patched.data["cedula"] == ""
 
 
 def test_cedula_encrypted_at_rest_is_digits_only(auth_client, receptionist_user):
