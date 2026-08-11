@@ -38,6 +38,9 @@ class MedicalRecord(TimestampedModel):
 
     class Meta:
         ordering = ["-date"]
+        indexes = [
+            models.Index(fields=["-date"], name="records_mr_date_idx"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.title} — {self.patient.full_name}"
@@ -73,6 +76,9 @@ class ConsultationLog(TimestampedModel):
 
     class Meta:
         ordering = ["-date"]
+        indexes = [
+            models.Index(fields=["-date"], name="records_cl_date_idx"),
+        ]
 
     def __str__(self) -> str:
         return f"Log {self.patient.full_name} {self.date:%Y-%m-%d}"

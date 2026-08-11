@@ -11,12 +11,14 @@ from apps.centers.serializers import (
     DoctorCenterBindingSerializer,
     MedicalCenterSerializer,
 )
+from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdmin, IsAdminOrIT, IsStaffUser
 from apps.core.services import client_ip, log_audit
 
 
-class MedicalCenterViewSet(AuditMixin, viewsets.ModelViewSet):
+class MedicalCenterViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
+    cache_model = "medicalcenter"
     queryset = MedicalCenter.objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")

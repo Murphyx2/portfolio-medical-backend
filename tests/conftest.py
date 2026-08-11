@@ -1,8 +1,21 @@
 import pytest  # noqa: E402
 from django.contrib.auth import get_user_model  # noqa: E402
+from django.core.cache import cache  # noqa: E402
 from rest_framework.test import APIClient  # noqa: E402
 
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def clear_cache():
+    """The reference-list caching (apps/core/caching.py) uses the real cache
+    backend (LocMemCache in tests), which — unlike the DB — is not reset by
+    pytest-django's per-test transaction rollback. Without this, a cached
+    medicines/ARS/centers list from one test can leak into the next and make
+    assertions about row counts/content flaky or wrong."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture
