@@ -2,12 +2,22 @@ from django.contrib.auth import get_user_model
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from apps.accounts.models import User
-from apps.core.services import user_accessible_center_ids
+from apps.core.services import can_view_inactive, user_accessible_center_ids
 
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_admin)
+
+
+class CanViewInactive(BasePermission):
+    """Gate for the restore action and anything else that touches deactivated
+    rows. Wraps `can_view_inactive()` rather than checking the role directly
+    so this and query-time visibility can never drift apart.
+    """
+
+    def has_permission(self, request, view):
+        return can_view_inactive(request.user)
 
 
 class IsIT(BasePermission):
