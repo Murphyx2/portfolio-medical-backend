@@ -1,7 +1,12 @@
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
+from apps.ars.models import ARS, ARSProgram
+from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
+from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
+from apps.records.models import MedicalRecord
 
 
 def _patient_payload(**overrides):
@@ -86,3 +91,74 @@ def test_update_patient_keeps_encryption(auth_client, receptionist_user):
     )
     assert res.status_code == 200
     assert Patient.objects.get(pk=pid).phone == "8095550999"
+
+
+# ---------------------------------------------------------------------------
+# query-count regressions (select_related + Exists doctor-scoping)
+# ---------------------------------------------------------------------------
+
+
+def _query_count(client, url):
+    with CaptureQueriesContext(connection) as ctx:
+        res = client.get(url)
+    assert res.status_code == 200
+    return len(ctx.captured_queries), res
+
+
+def test_patient_list_query_count_does_not_scale_with_row_count(
+    auth_client, admin_user, db
+):
+    # ars_name/ars_program_name/center_name are serializer fields sourced
+    # from related objects (PatientSerializer); without select_related each
+    # row would cost 3 extra queries (N+1).
+    ars = ARS.objects.create(ars_id="Q1", name="Insurer")
+    program = ARSProgram.objects.create(ars=ars, name="Plan A")
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+
+    def _make(n):
+        for i in range(n):
+            Patient.objects.create(
+                first_name=f"P{i}",
+                last_name="X",
+                ars=ars,
+                ars_program=program,
+                center=center,
+            )
+
+    client = auth_client(admin_user)
+    _make(1)
+    n1, _ = _query_count(client, "/api/patients/?page_size=20")
+    _make(4)  # 5 patients total
+    n5, _ = _query_count(client, "/api/patients/?page_size=20")
+    assert n1 == n5
+
+
+def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
+    auth_client, doctor_user, db
+):
+    # Doctor-scoping used to be a join + .distinct(); with multiple
+    # MedicalRecords for the same center-bound patient, a join would have
+    # produced duplicate rows (masked by .distinct()). The Exists() subquery
+    # scoping doesn't join at all, so there's nothing to de-duplicate.
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    profile = DoctorProfile.objects.create(
+        user=doctor_user, specialty="GP", license_number="L1", contact_phone="8095550001"
+    )
+    DoctorCenterBinding.objects.create(
+        doctor=profile, center=center, approved=True, approved_by=doctor_user
+    )
+    patient = Patient.objects.create(first_name="Ana", last_name="Perez", center=center)
+    for i in range(3):
+        MedicalRecord.objects.create(
+            patient=patient, created_by=doctor_user, center=center, title=f"Visit {i}"
+        )
+
+    res = auth_client(doctor_user).get("/api/patients/?page_size=20")
+    assert res.status_code == 200
+    assert res.data["count"] == 1
+    ids = [r["id"] for r in res.data["results"]]
+    assert ids.count(patient.id) == 1

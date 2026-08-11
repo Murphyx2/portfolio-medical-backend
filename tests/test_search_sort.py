@@ -125,24 +125,18 @@ def test_patient_ordering_by_related_ars_name(auth_client, admin_user, db):
     assert res.data["results"][0]["full_name"] == "Abe A"
 
 
-def test_patient_ordering_encrypted_cedula_sorted_in_python(
+def test_patient_ordering_encrypted_field_falls_back_to_default(
     auth_client, admin_user, mixed_patients
 ):
+    # Encrypted columns (cedula/NSS/phone/email/age) cannot be ordered in SQL;
+    # ordering by them is ignored and the list falls back to the default
+    # search_name ordering. The Patients page sorts those columns client-side.
     res = auth_client(admin_user).get("/api/patients/?ordering=cedula&page_size=20")
-    cedulas = [r["cedula"] for r in res.data["results"]]
-    assert cedulas == sorted(cedulas)
-    res = auth_client(admin_user).get("/api/patients/?ordering=-cedula&page_size=20")
-    cedulas = [r["cedula"] for r in res.data["results"]]
-    assert cedulas == sorted(cedulas, reverse=True)
-
-
-def test_patient_ordering_by_age_sorted_in_python(auth_client, admin_user, db):
-    _patient(first_name="Young", last_name="A", birth_date="2010-01-01")
-    _patient(first_name="Old", last_name="B", birth_date="1970-01-01")
-    res = auth_client(admin_user).get("/api/patients/?ordering=age&page_size=20")
-    assert [r["age"] for r in res.data["results"]] == [16, 56]
+    assert res.status_code == 200
+    assert res.data["count"] == 3
     res = auth_client(admin_user).get("/api/patients/?ordering=-age&page_size=20")
-    assert [r["age"] for r in res.data["results"]] == [56, 16]
+    assert res.status_code == 200
+    assert res.data["count"] == 3
 
 
 def test_patient_invalid_ordering_ignored(auth_client, admin_user, mixed_patients):

@@ -60,6 +60,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -110,6 +111,9 @@ DATABASES = {
         "PASSWORD": env("POSTGRES_PASSWORD", ""),
         "HOST": env("POSTGRES_HOST", "db"),
         "PORT": env("POSTGRES_PORT", "5432"),
+        # Keep persistent connections alive between requests: saves the TCP +
+        # auth handshake on every list/detail call (5-min max idle).
+        "CONN_MAX_AGE": 60,
     }
 }
 
@@ -117,6 +121,14 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": env("REDIS_URL", "redis://localhost:6379/0"),
+        # Namespace keys (allows several apps/environments to share one Redis).
+        "KEY_PREFIX": env("DJANGO_CACHE_KEY_PREFIX", "mc"),
+        # A stuck/absent Redis must not block API requests: fail fast and let
+        # throttling/caching degrade gracefully instead of hanging.
+        "OPTIONS": {
+            "socket_connect_timeout": 1,
+            "socket_timeout": 1,
+        },
     }
 }
 

@@ -3,11 +3,13 @@ from rest_framework.permissions import SAFE_METHODS
 
 from apps.ars.models import ARS
 from apps.ars.serializers import ARSSerializer
+from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdminOrReceptionist, IsStaffUser
 
 
-class ARSViewSet(AuditMixin, viewsets.ModelViewSet):
+class ARSViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
+    cache_model = "ars"
     queryset = ARS.objects.prefetch_related("programs")
     serializer_class = ARSSerializer
     permission_classes = [IsStaffUser]

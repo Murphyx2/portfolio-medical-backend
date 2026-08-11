@@ -1,8 +1,9 @@
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
-from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from drf_spectacular.views import SpectacularSwaggerView
 
+from apps.core.views import CachedSpectacularAPIView
 from apps.records.views import ProtectedMediaView
 
 urlpatterns = [
@@ -16,7 +17,7 @@ urlpatterns = [
     path("api/", include("apps.medicines.urls")),
     path("api/", include("apps.appointments.urls")),
     path("api/health/", lambda request: JsonResponse({"status": "ok"}), name="health"),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/schema/", CachedSpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",
         SpectacularSwaggerView.as_view(url_name="schema"),

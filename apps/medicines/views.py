@@ -3,13 +3,15 @@ from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 
+from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdminOrIT, IsStaffUser
 from apps.medicines.models import Medicine
 from apps.medicines.serializers import MedicineSerializer
 
 
-class MedicineViewSet(AuditMixin, viewsets.ModelViewSet):
+class MedicineViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
+    cache_model = "medicine"
     queryset = Medicine.objects.all()
     serializer_class = MedicineSerializer
     permission_classes = [IsStaffUser]

@@ -7,7 +7,7 @@ from apps.core.models import AuditLog
 MEDIA_TOKEN_MAX_AGE = 60 * 60
 
 
-def patient_ids_matching_digits(term: str) -> list[int]:
+def patient_ids_matching_digits(term: str):
     """Patient ids whose cedula/NSS trailing digits match a search term.
 
     Non-digit characters (spaces, hyphens from the formatted display like
@@ -16,18 +16,21 @@ def patient_ids_matching_digits(term: str) -> list[int]:
     digit search never has to decrypt every row in Python: terms of 4+ digits
     compare against the stored last-4 exactly, shorter terms use a substring
     match on those columns.
+
+    Returns a ``values_list("id")`` queryset so the caller can use it as an
+    ``id__in`` subquery; the underlying query runs once, in the database.
     """
     digits = "".join(ch for ch in term if ch.isdigit())
-    if not digits:
-        return []
-    tail = digits[-4:]
     from apps.patients.models import Patient
 
+    if not digits:
+        return Patient.objects.none().values_list("id", flat=True)
+    tail = digits[-4:]
     if len(digits) >= 4:
         q = Q(cedula_last4=tail) | Q(nss_last4=tail)
     else:
         q = Q(cedula_last4__icontains=tail) | Q(nss_last4__icontains=tail)
-    return list(Patient.objects.filter(q).values_list("id", flat=True))
+    return Patient.objects.filter(q).values_list("id", flat=True)
 
 
 def sign_media_token(file_path: str) -> str:
