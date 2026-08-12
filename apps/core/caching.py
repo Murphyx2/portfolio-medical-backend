@@ -5,16 +5,23 @@ cached. Patients, records, appointments and doctor profiles carry PII or
 role-specific masking and must never be cached server-side (M-05 asserts the
 ``Cache-Control: no-store`` response header for them).
 
-The cached lists are identical for every authenticated staff member, so a
-single key shared across users is safe. Writes bump a per-model version
+The cached lists are identical for every authenticated staff member -- with
+one exception: admin requests carrying ``?include_inactive=true`` see a
+different (wider) result set than everyone else for the same URL, so those
+specific requests bypass the cache entirely (read and write) rather than
+risk serving one role's response to another. This is low-volume traffic
+(admin-only, opt-in), so skipping the cache for it is simpler and safer than
+adding a role dimension to every cache key. Writes bump a per-model version
 counter (``apps.core.signals``, wired to ``post_save``/``post_delete`` so
 Django-admin edits invalidate the cache too, not just API writes) so a newly
-created or updated medicine/ARS/center shows up on the very next request
-instead of waiting for the TTL to expire.
+created, updated, or deactivated medicine/ARS/center shows up on the very
+next request instead of waiting for the TTL to expire.
 """
 
 from django.core.cache import cache
 from rest_framework.response import Response
+
+from apps.core.services import can_view_inactive
 
 CACHE_TTL = 300
 # Version counters never expire (they are tiny and must outlive the data keys
@@ -87,6 +94,11 @@ class CachedListViewMixin:
     def list(self, request, *args, **kwargs):
         user = getattr(request, "user", None)
         if not (user and getattr(user, "is_authenticated", False)):
+            return super().list(request, *args, **kwargs)
+        if (
+            can_view_inactive(user)
+            and request.query_params.get("include_inactive", "").lower() == "true"
+        ):
             return super().list(request, *args, **kwargs)
         key = list_cache_key(self.cache_model, request)
         cached = cache.get(key)
