@@ -19,7 +19,7 @@ from apps.core.services import client_ip, log_audit
 
 class MedicalCenterViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     cache_model = "medicalcenter"
-    queryset = MedicalCenter.objects.annotate(
+    queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
@@ -36,7 +36,7 @@ class MedicalCenterViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSe
 
 
 class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = DoctorCenterBinding.objects.select_related("doctor__user", "center")
+    queryset = DoctorCenterBinding.all_objects.select_related("doctor__user", "center")
     serializer_class = DoctorCenterBindingSerializer
     permission_classes = [IsStaffUser]
     filterset_fields = ["doctor", "center", "approved"]

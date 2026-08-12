@@ -29,7 +29,7 @@ from apps.records.serializers import (
 
 
 class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = MedicalRecord.objects.select_related(
+    queryset = MedicalRecord.all_objects.select_related(
         "patient", "created_by", "center"
     ).prefetch_related("images")
     serializer_class = MedicalRecordSerializer
@@ -63,7 +63,7 @@ class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
 
 
 class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = ConsultationLog.objects.select_related("patient", "doctor", "center")
+    queryset = ConsultationLog.all_objects.select_related("patient", "doctor", "center")
     serializer_class = ConsultationLogSerializer
     permission_classes = [IsStaffUser]
     filterset_fields = ["patient", "center", "doctor"]
@@ -93,7 +93,7 @@ class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
 
 
 class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = RecordImage.objects.select_related("record", "uploaded_by").order_by(
+    queryset = RecordImage.all_objects.select_related("record", "uploaded_by").order_by(
         "-created_at"
     )
     serializer_class = RecordImageSerializer

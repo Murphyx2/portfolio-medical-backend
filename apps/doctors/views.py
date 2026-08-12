@@ -11,7 +11,7 @@ from apps.doctors.serializers import DoctorProfileSerializer, DoctorScheduleSeri
 
 
 class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = DoctorProfile.objects.select_related("user").all()
+    queryset = DoctorProfile.all_objects.select_related("user").all()
     serializer_class = DoctorProfileSerializer
     permission_classes = [IsStaffUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -62,7 +62,7 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
 
 
 class DoctorScheduleViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = DoctorSchedule.objects.select_related("doctor__user", "center").all()
+    queryset = DoctorSchedule.all_objects.select_related("doctor__user", "center").all()
     serializer_class = DoctorScheduleSerializer
     permission_classes = [IsStaffUser]
     filterset_fields = ["doctor", "center", "weekday"]

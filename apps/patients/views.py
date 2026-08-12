@@ -12,7 +12,7 @@ from apps.patients.serializers import PatientSerializer
 
 
 class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = Patient.objects.select_related("ars", "ars_program", "center").all()
+    queryset = Patient.all_objects.select_related("ars", "ars_program", "center").all()
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
     filter_backends = [DjangoFilterBackend, PatientSearchFilter, OrderingFilter]

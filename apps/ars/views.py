@@ -10,7 +10,7 @@ from apps.core.permissions import IsAdminOrReceptionist, IsStaffUser
 
 class ARSViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     cache_model = "ars"
-    queryset = ARS.objects.prefetch_related("programs")
+    queryset = ARS.all_objects.prefetch_related("programs")
     serializer_class = ARSSerializer
     permission_classes = [IsStaffUser]
     filterset_fields = ["name"]
