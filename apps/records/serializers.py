@@ -5,7 +5,17 @@ from PIL import Image
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
-from apps.core.services import is_masked_role, sign_media_token, user_accessible_center_ids
+from apps.core.services import (
+    can_view_inactive,
+    is_masked_role,
+    sign_media_token,
+    user_accessible_center_ids,
+)
+
+
+def _request_user(context):
+    request = context.get("request")
+    return getattr(request, "user", None) if request else None
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
@@ -41,8 +51,14 @@ class RecordImageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RecordImage
-        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by"]
+        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active"]
         read_only_fields = ["id", "image_url", "uploaded_by"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def validate_image(self, value):
         if value is None:
@@ -111,8 +127,15 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
             "medicine_and_doses",
             "notes",
             "images",
+            "active",
         ]
         read_only_fields = ["id", "created_by", "date"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
@@ -172,8 +195,15 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
             "assessment",
             "plan",
             "notes",
+            "active",
         ]
         read_only_fields = ["id", "doctor", "date"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def get_doctor_name(self, obj):
         return obj.doctor.get_full_name() or obj.doctor.username

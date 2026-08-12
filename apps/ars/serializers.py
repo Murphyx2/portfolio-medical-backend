@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
 from apps.ars.models import ARS, ARSProgram
+from apps.core.services import can_view_inactive
+
+
+def _request_user(context):
+    request = context.get("request")
+    return getattr(request, "user", None) if request else None
 
 
 class ARSProgramSerializer(serializers.ModelSerializer):
@@ -8,7 +14,13 @@ class ARSProgramSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ARSProgram
-        fields = ["id", "name"]
+        fields = ["id", "name", "active"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
 
 class ARSSerializer(serializers.ModelSerializer):
@@ -16,7 +28,13 @@ class ARSSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ARS
-        fields = ["id", "ars_id", "name", "programs"]
+        fields = ["id", "ars_id", "name", "programs", "active"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def create(self, validated_data):
         programs = validated_data.pop("programs", [])

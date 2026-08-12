@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.appointments.models import Appointment
-from apps.core.services import is_masked_role
+from apps.core.services import can_view_inactive, is_masked_role
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
 from apps.doctors.models import DoctorProfile
@@ -46,8 +46,17 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "created_by",
             "created_by_name",
             "created_at",
+            "active",
         ]
         read_only_fields = ["id", "created_by", "created_at"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        if not can_view_inactive(user):
+            fields["active"].read_only = True
+        return fields
 
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username

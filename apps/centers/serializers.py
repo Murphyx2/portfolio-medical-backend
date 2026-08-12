@@ -1,7 +1,13 @@
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
+from apps.core.services import can_view_inactive
 from apps.core.validators import validate_phone
+
+
+def _request_user(context):
+    request = context.get("request")
+    return getattr(request, "user", None) if request else None
 
 
 class MedicalCenterSerializer(serializers.ModelSerializer):
@@ -9,7 +15,13 @@ class MedicalCenterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MedicalCenter
-        fields = ["id", "name", "code", "address", "phone", "email", "doctor_count"]
+        fields = ["id", "name", "code", "address", "phone", "email", "doctor_count", "active"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def validate_phone(self, value: str) -> str:
         return validate_phone(value)
@@ -30,5 +42,12 @@ class DoctorCenterBindingSerializer(serializers.ModelSerializer):
             "approved",
             "approved_by",
             "created_at",
+            "active",
         ]
         read_only_fields = ["approved_by"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
