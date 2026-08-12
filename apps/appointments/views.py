@@ -14,7 +14,7 @@ from apps.core.services import client_ip, log_audit, user_accessible_center_ids
 
 
 class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = Appointment.objects.select_related(
+    queryset = Appointment.all_objects.select_related(
         "patient", "doctor__user", "center", "created_by"
     )
     serializer_class = AppointmentSerializer

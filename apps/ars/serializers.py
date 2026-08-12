@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
 from apps.ars.models import ARS, ARSProgram
+from apps.core.services import can_view_inactive
+
+
+def _request_user(context):
+    request = context.get("request")
+    return getattr(request, "user", None) if request else None
 
 
 class ARSProgramSerializer(serializers.ModelSerializer):
@@ -8,7 +14,13 @@ class ARSProgramSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ARSProgram
-        fields = ["id", "name"]
+        fields = ["id", "name", "active"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
 
 class ARSSerializer(serializers.ModelSerializer):
@@ -16,7 +28,13 @@ class ARSSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ARS
-        fields = ["id", "ars_id", "name", "programs"]
+        fields = ["id", "ars_id", "name", "programs", "active"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def create(self, validated_data):
         programs = validated_data.pop("programs", [])
@@ -42,12 +60,24 @@ class ARSSerializer(serializers.ModelSerializer):
                 continue
             program_id = item.get("id")
             if program_id:
-                program = ARSProgram.objects.filter(pk=program_id, ars=ars).first()
+                # all_objects: a previously-deactivated program is still
+                # findable by id here, so re-adding it revives it instead of
+                # creating a duplicate.
+                program = ARSProgram.all_objects.filter(pk=program_id, ars=ars).first()
                 if program is not None:
+                    changed = False
                     if program.name != name:
                         program.name = name
+                        changed = True
+                    if not program.active:
+                        program.active = True
+                        changed = True
+                    if changed:
                         program.save()
                     keep_ids.append(program.pk)
                     continue
             keep_ids.append(ARSProgram.objects.create(ars=ars, name=name).pk)
-        ars.programs.exclude(pk__in=keep_ids).delete()
+        # ars.programs is already active-only (SoftDeleteManager as the
+        # default manager), so this only ever touches currently-active
+        # programs omitted from the payload -- deactivate instead of delete.
+        ars.programs.exclude(pk__in=keep_ids).update(active=False)

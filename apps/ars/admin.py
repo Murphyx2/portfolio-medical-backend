@@ -6,7 +6,8 @@ from apps.core.admin import AuditModelAdmin
 
 @admin.register(ARS)
 class ARSAdmin(AuditModelAdmin):
-    list_display = ("ars_id", "name", "program_count")
+    list_display = ("ars_id", "name", "program_count", "active")
+    list_filter = ("active",)
     search_fields = ("ars_id", "name")
 
     @admin.display(description="Programs")
@@ -16,5 +17,5 @@ class ARSAdmin(AuditModelAdmin):
 
 @admin.register(ARSProgram)
 class ARSProgramAdmin(AuditModelAdmin):
-    list_display = ("name", "ars")
-    list_filter = ("ars",)
+    list_display = ("name", "ars", "active")
+    list_filter = ("ars", "active")

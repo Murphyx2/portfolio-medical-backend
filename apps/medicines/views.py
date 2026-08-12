@@ -12,7 +12,7 @@ from apps.medicines.serializers import MedicineSerializer
 
 class MedicineViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     cache_model = "medicine"
-    queryset = Medicine.objects.all()
+    queryset = Medicine.all_objects.all()
     serializer_class = MedicineSerializer
     permission_classes = [IsStaffUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]

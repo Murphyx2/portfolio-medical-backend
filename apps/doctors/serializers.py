@@ -2,9 +2,15 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
+from apps.core.services import can_view_inactive
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
 from apps.patients.serializers import _mask
+
+
+def _request_user(context):
+    request = context.get("request")
+    return getattr(request, "user", None) if request else None
 
 
 class DoctorProfileSerializer(serializers.ModelSerializer):
@@ -29,7 +35,14 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "contact_phone",
             "contact_email",
             "bio",
+            "active",
         ]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -76,10 +89,17 @@ class DoctorScheduleSerializer(serializers.ModelSerializer):
             "weekday_label",
             "start_time",
             "end_time",
+            "active",
         ]
         read_only_fields = ["weekday_label"]
 
     weekday_label = serializers.SerializerMethodField()
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not can_view_inactive(_request_user(self.context)):
+            fields["active"].read_only = True
+        return fields
 
     def get_weekday_label(self, obj):
         return obj.get_weekday_display()

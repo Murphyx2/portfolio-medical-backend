@@ -9,6 +9,34 @@ class TimestampedModel(models.Model):
         abstract = True
 
 
+class SoftDeleteManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(active=True)
+
+
+class SoftDeleteModel(models.Model):
+    """Soft-delete flag: "deleting" a row sets active=False instead of a real
+    DB delete. Kept separate from TimestampedModel (rather than merged into
+    it) so AuditLog, which also inherits TimestampedModel, doesn't gain an
+    active field or a filtered manager it has no use for.
+
+    `objects` (filtered) is declared before `all_objects` (unfiltered) so it
+    becomes the model's `_default_manager` -- every reverse-relation traversal
+    app-wide (e.g. `ars.programs.all()`) automatically excludes inactive rows
+    too, not just explicit ViewSet querysets. Forward FK/O2O access (e.g.
+    `appointment.doctor`) is unaffected -- Django resolves those through the
+    model's unfiltered `_base_manager`, not `_default_manager`, as long as no
+    model sets `Meta.base_manager_name` (do not set it on these models).
+    """
+
+    active = models.BooleanField(default=True)
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+
+
 class AuditLog(TimestampedModel):
     """Security audit trail: who did what, when, from where."""
 

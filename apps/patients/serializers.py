@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
 
-from apps.core.services import is_masked_role
+from apps.core.services import can_view_inactive, is_masked_role
 from apps.core.validators import validate_phone
 from apps.patients.models import Patient
 
@@ -49,6 +49,7 @@ class PatientSerializer(serializers.ModelSerializer):
             "ars_name",
             "ars_program",
             "ars_program_name",
+            "active",
             "created_at",
             "updated_at",
         ]
@@ -59,7 +60,13 @@ class PatientSerializer(serializers.ModelSerializer):
         if self.instance is None:
             fields["cedula"].required = True
             fields["cedula"].allow_blank = False
+        if not can_view_inactive(self._request_user()):
+            fields["active"].read_only = True
         return fields
+
+    def _request_user(self):
+        request = self.context.get("request")
+        return getattr(request, "user", None) if request else None
 
     def get_age(self, obj) -> int | None:
         if not obj.birth_date:
