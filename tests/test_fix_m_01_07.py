@@ -98,7 +98,9 @@ def test_nurse_can_delete_own_record(auth_client, nurse_user):
     record = _record(patient, nurse_user)
     res = auth_client(nurse_user).delete(f"/api/medical-records/{record.id}/")
     assert res.status_code == 204
+    # Soft-delete: the row still exists, just deactivated -- not gone.
     assert not MedicalRecord.objects.filter(pk=record.id).exists()
+    assert MedicalRecord.all_objects.get(pk=record.id).active is False
 
 
 def test_nurse_can_create_record(auth_client, nurse_user):

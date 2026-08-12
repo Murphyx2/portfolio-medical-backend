@@ -11,17 +11,20 @@ class RecordImageInline(admin.TabularInline):
 
 @admin.register(MedicalRecord)
 class MedicalRecordAdmin(AuditModelAdmin):
-    list_display = ("title", "patient", "created_by", "date")
+    list_display = ("title", "patient", "created_by", "date", "active")
+    list_filter = ("active",)
     search_fields = ("title", "patient__first_name", "patient__last_name")
     inlines = [RecordImageInline]
 
 
 @admin.register(ConsultationLog)
 class ConsultationLogAdmin(AuditModelAdmin):
-    list_display = ("patient", "doctor", "date")
+    list_display = ("patient", "doctor", "date", "active")
+    list_filter = ("active",)
     search_fields = ("patient__first_name", "patient__last_name", "doctor__username")
 
 
 @admin.register(RecordImage)
 class RecordImageAdmin(AuditModelAdmin):
-    list_display = ("record", "caption", "uploaded_by")
+    list_display = ("record", "caption", "uploaded_by", "active")
+    list_filter = ("active",)

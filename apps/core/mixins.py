@@ -25,9 +25,17 @@ class AuditMixin:
         qs = super().get_queryset()
         field = soft_delete_field_name(qs.model)
         if field:
-            include_inactive = (
-                can_view_inactive(getattr(self.request, "user", None))
-                and self.request.query_params.get("include_inactive", "").lower() == "true"
+            # The restore action inherently targets an inactive row, so it
+            # always widens for anyone who reaches it (already gated to
+            # CanViewInactive by the action's own permission_classes) --
+            # without this, get_object() inside restore() could never find
+            # the row it's meant to restore, since a plain POST .../restore/
+            # never carries ?include_inactive=true itself.
+            include_inactive = can_view_inactive(
+                getattr(self.request, "user", None)
+            ) and (
+                getattr(self, "action", None) == "restore"
+                or self.request.query_params.get("include_inactive", "").lower() == "true"
             )
             if not include_inactive:
                 qs = qs.filter(**{field: True})
