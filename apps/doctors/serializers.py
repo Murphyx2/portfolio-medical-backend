@@ -56,7 +56,8 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
                 data["license_number"] = _mask(str(data["license_number"]))
             if data.get("contact_phone"):
                 data["contact_phone"] = _mask(str(data["contact_phone"]))
-            data["contact_email"] = None
+            if data.get("contact_email"):
+                data["contact_email"] = _mask(str(data["contact_email"]))
             data["bio"] = None
         return data
 

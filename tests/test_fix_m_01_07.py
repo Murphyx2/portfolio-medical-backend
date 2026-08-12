@@ -161,7 +161,7 @@ def test_receptionist_sees_masked_doctor_contact(auth_client, receptionist_user,
     assert data["specialty"] == "Cardiology"
     assert data["contact_phone"] != "8095550000" and "••••" in data["contact_phone"]
     assert data["license_number"] != "LIC-123"
-    assert data["contact_email"] is None
+    assert data["contact_email"] != "doc@example.com" and "••••" in data["contact_email"]
     assert data["bio"] is None
 
 
@@ -169,7 +169,7 @@ def test_nurse_sees_masked_doctor_contact(auth_client, nurse_user, doctor_user):
     prof = _doctor_profile(doctor_user)
     data = _doctor_detail(auth_client, nurse_user, prof)
     assert data["contact_phone"] != "8095550000"
-    assert data["contact_email"] is None
+    assert data["contact_email"] != "doc@example.com" and "••••" in data["contact_email"]
 
 
 def test_admin_sees_full_doctor_contact(auth_client, admin_user, doctor_user):
