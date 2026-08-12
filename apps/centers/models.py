@@ -1,10 +1,10 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class MedicalCenter(TimestampedModel):
+class MedicalCenter(TimestampedModel, SoftDeleteModel):
     name = models.CharField(max_length=200)
     code = models.CharField(max_length=20, unique=True)
     address = models.CharField(max_length=300)
@@ -18,7 +18,7 @@ class MedicalCenter(TimestampedModel):
         return self.name
 
 
-class DoctorCenterBinding(TimestampedModel):
+class DoctorCenterBinding(TimestampedModel, SoftDeleteModel):
     """Binds a doctor to a medical center; access requires admin approval."""
 
     doctor = models.ForeignKey(

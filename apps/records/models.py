@@ -5,10 +5,10 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.fields import EncryptedTextField
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class MedicalRecord(TimestampedModel):
+class MedicalRecord(TimestampedModel, SoftDeleteModel):
     """Doctor-written medical record with encrypted clinical content."""
 
     patient = models.ForeignKey(
@@ -46,7 +46,7 @@ class MedicalRecord(TimestampedModel):
         return f"{self.title} — {self.patient.full_name}"
 
 
-class ConsultationLog(TimestampedModel):
+class ConsultationLog(TimestampedModel, SoftDeleteModel):
     """A log of what happened during a consultation (SOAP-style notes)."""
 
     patient = models.ForeignKey(
@@ -91,7 +91,7 @@ def record_image_upload_to(instance, filename: str) -> str:
     return f"records/{instance.record.patient_id}/{name}"
 
 
-class RecordImage(TimestampedModel):
+class RecordImage(TimestampedModel, SoftDeleteModel):
     record = models.ForeignKey(
         MedicalRecord,
         on_delete=models.CASCADE,

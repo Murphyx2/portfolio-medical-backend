@@ -1,10 +1,10 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class Appointment(TimestampedModel):
+class Appointment(TimestampedModel, SoftDeleteModel):
     """Appointment created by a doctor or a receptionist for a patient."""
 
     class Status(models.TextChoices):

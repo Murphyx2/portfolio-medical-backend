@@ -1,10 +1,10 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class DoctorProfile(TimestampedModel):
+class DoctorProfile(TimestampedModel, SoftDeleteModel):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -27,7 +27,7 @@ class DoctorProfile(TimestampedModel):
         return f"{self.full_name} ({self.specialty})"
 
 
-class DoctorSchedule(TimestampedModel):
+class DoctorSchedule(TimestampedModel, SoftDeleteModel):
     """Optional presence times of a doctor at a center."""
 
     class Weekday(models.IntegerChoices):

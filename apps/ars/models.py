@@ -1,9 +1,9 @@
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class ARS(TimestampedModel):
+class ARS(TimestampedModel, SoftDeleteModel):
     """ARS insurance company (Aseguradora de Salud)."""
 
     ars_id = models.CharField(max_length=20, unique=True, verbose_name="ARS ID")
@@ -16,7 +16,7 @@ class ARS(TimestampedModel):
         return self.name
 
 
-class ARSProgram(TimestampedModel):
+class ARSProgram(TimestampedModel, SoftDeleteModel):
     """A program an ARS offers to its customers."""
 
     ars = models.ForeignKey(

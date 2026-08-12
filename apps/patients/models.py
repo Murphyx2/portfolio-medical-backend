@@ -1,10 +1,10 @@
 from django.db import models
 
 from apps.core.fields import EncryptedCharField, EncryptedTextField
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class Patient(TimestampedModel):
+class Patient(TimestampedModel, SoftDeleteModel):
     """Patient records. Sensitive PII is stored encrypted at rest."""
 
     class Gender(models.TextChoices):

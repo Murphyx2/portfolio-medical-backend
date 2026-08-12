@@ -1,9 +1,9 @@
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class Medicine(TimestampedModel):
+class Medicine(TimestampedModel, SoftDeleteModel):
     generic_name = models.CharField(
         max_length=200,
         verbose_name="Generic (medical) term",
