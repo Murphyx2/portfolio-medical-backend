@@ -20,7 +20,13 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     serializer_class = AppointmentSerializer
     permission_classes = [IsStaffUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["patient", "doctor", "center", "status", "date_time"]
+    filterset_fields = {
+        "patient": ["exact"],
+        "doctor": ["exact"],
+        "center": ["exact"],
+        "status": ["exact"],
+        "date_time": ["exact", "gte", "lt"],
+    }
     search_fields = [
         "patient__search_name",
         "doctor__user__last_name",
