@@ -19,6 +19,7 @@ def _payload(**overrides):
         "first_name": "Uniq",
         "last_name": "Test",
         "gender": "FEMALE",
+        "birth_date": "1990-05-12",
         "cedula": "20100000001",
     }
     data.update(overrides)

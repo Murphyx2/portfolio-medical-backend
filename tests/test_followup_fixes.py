@@ -187,11 +187,14 @@ def test_patient_birth_date_cannot_be_future(auth_client, receptionist_user):
     assert "birth_date" in res.data
 
 
-def test_patient_birth_date_optional(auth_client, receptionist_user):
+def test_patient_birth_date_required(auth_client, receptionist_user):
+    # Birth date is mandatory (business rule tightened after this test was
+    # first written, when it was optional).
     res = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(birth_date=""), format="json"
     )
-    assert res.status_code == 201, res.data
+    assert res.status_code == 400, res.data
+    assert "birth_date" in res.data
 
 
 # ---------------------------------------------------------------------------

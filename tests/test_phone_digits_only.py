@@ -21,6 +21,7 @@ def _patient_payload(**overrides):
         "first_name": "Phone",
         "last_name": "Test",
         "gender": "FEMALE",
+        "birth_date": "1990-05-12",
         "phone": "(809) 555-1212",
         "cedula": "01098765433",
     }
