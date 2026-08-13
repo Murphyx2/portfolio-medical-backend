@@ -50,6 +50,51 @@ def test_receptionist_cannot_create_center(auth_client, receptionist_user):
     assert res.status_code in (401, 403)
 
 
+def test_center_is_default_false_by_default(auth_client, admin_user):
+    res = auth_client(admin_user).post("/api/centers/", _center_payload(), format="json")
+    assert res.status_code == 201, res.data
+    assert res.data["is_default"] is False
+
+
+def test_setting_center_default_unsets_previous_default(auth_client, admin_user):
+    first = auth_client(admin_user).post(
+        "/api/centers/", _center_payload(is_default=True), format="json"
+    )
+    assert first.status_code == 201, first.data
+    assert first.data["is_default"] is True
+
+    second = auth_client(admin_user).post(
+        "/api/centers/",
+        _center_payload(code="CH002", is_default=True),
+        format="json",
+    )
+    assert second.status_code == 201, second.data
+    assert second.data["is_default"] is True
+
+    first_center = MedicalCenter.objects.get(pk=first.data["id"])
+    assert first_center.is_default is False
+    assert MedicalCenter.objects.filter(is_default=True).count() == 1
+
+
+def test_patch_center_default_unsets_previous_default(auth_client, admin_user):
+    first = auth_client(admin_user).post(
+        "/api/centers/", _center_payload(is_default=True), format="json"
+    )
+    second = auth_client(admin_user).post(
+        "/api/centers/", _center_payload(code="CH003"), format="json"
+    )
+    assert second.data["is_default"] is False
+
+    patched = auth_client(admin_user).patch(
+        f"/api/centers/{second.data['id']}/", {"is_default": True}, format="json"
+    )
+    assert patched.status_code == 200, patched.data
+
+    first_center = MedicalCenter.objects.get(pk=first.data["id"])
+    assert first_center.is_default is False
+    assert MedicalCenter.objects.filter(is_default=True).count() == 1
+
+
 def test_admin_creates_doctor_profile(auth_client, admin_user, doctor_user):
     res = auth_client(admin_user).post(
         "/api/doctors/profiles/",

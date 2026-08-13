@@ -25,6 +25,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from apps.ars.models import ARS
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord
 
@@ -52,6 +53,12 @@ RECORD_TITLES = [
 ]
 
 DR_AREA_CODES = ["809", "829", "849"]
+
+# Fraction of patients over 50 who get an ARS/program on file -- "some", not
+# all, matches the NSS fill-rate pattern below and reflects that not every
+# older patient has active insurance.
+ARS_ASSIGNMENT_PROBABILITY = 0.6
+ARS_MIN_AGE = 50
 
 
 class Command(BaseCommand):
@@ -104,6 +111,14 @@ class Command(BaseCommand):
     def _create_patients(self, rng: random.Random, count: int) -> list[Patient]:
         used_cedulas: set[str] = set()
         used_nss: set[str] = set()
+        # Real seeded insurers (SEMMA/SENASA, per PROGRESS.md) with at least
+        # one program -- excludes the QA/RBAC-script ARS clutter that
+        # accumulates in this table (matches this file's own reason for
+        # existing: undo QA-script junk, don't propagate it into fresh data).
+        ars_choices = [
+            a for a in ARS.objects.filter(ars_id__in=["SM", "SE"]).prefetch_related("programs")
+            if a.programs.exists()
+        ]
         patients = []
         for _ in range(count):
             first = rng.choice(FIRST_NAMES)
@@ -111,22 +126,53 @@ class Command(BaseCommand):
             cedula = self._unique_digits(rng, 11, used_cedulas)
             nss = self._unique_digits(rng, 11, used_nss) if rng.random() < 0.7 else ""
             birth_date = date(1940, 1, 1) + timedelta(days=rng.randint(0, 30000))
-            patients.append(
-                Patient.objects.create(
-                    first_name=first,
-                    last_name=last,
-                    birth_date=birth_date.isoformat(),
-                    gender=rng.choice(
-                        [Patient.Gender.MALE, Patient.Gender.FEMALE]
-                    ),
-                    phone=f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
-                    address=f"{rng.choice(STREETS)} #{rng.randint(1, 200)}",
-                    email=f"{first.lower()}.{last.split()[0].lower()}{rng.randint(1, 999)}@example.com",
-                    cedula=cedula,
-                    nss=nss,
-                )
+            patient_kwargs = dict(
+                first_name=first,
+                last_name=last,
+                birth_date=birth_date.isoformat(),
+                gender=rng.choice([Patient.Gender.MALE, Patient.Gender.FEMALE]),
+                phone=f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
+                address=f"{rng.choice(STREETS)} #{rng.randint(1, 200)}",
+                email=f"{first.lower()}.{last.split()[0].lower()}{rng.randint(1, 999)}@example.com",
+                cedula=cedula,
+                nss=nss,
             )
+            age = self._age(birth_date)
+            if age < 18:
+                patient_kwargs.update(self._guardian_kwargs(rng))
+            elif age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
+                patient_kwargs.update(self._ars_kwargs(rng, ars_choices))
+            patients.append(Patient.objects.create(**patient_kwargs))
         return patients
+
+    @staticmethod
+    def _ars_kwargs(rng: random.Random, ars_choices: list[ARS]) -> dict:
+        ars = rng.choice(ars_choices)
+        programs = list(ars.programs.all())
+        return {"ars": ars, "ars_program": rng.choice(programs) if programs else None}
+
+    def _guardian_kwargs(self, rng: random.Random) -> dict:
+        """Synthetic guardian/tutor info for a minor patient (no uniqueness
+        needed -- siblings can legitimately share a guardian)."""
+        return {
+            "has_guardian": True,
+            "guardian_first_name": rng.choice(FIRST_NAMES),
+            "guardian_last_name": f"{rng.choice(LAST_NAMES)} {rng.choice(LAST_NAMES)}",
+            "guardian_cedula": "".join(str(rng.randint(0, 9)) for _ in range(11)),
+            "guardian_nss": (
+                "".join(str(rng.randint(0, 9)) for _ in range(11)) if rng.random() < 0.5 else ""
+            ),
+            "guardian_phone": f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
+        }
+
+    @staticmethod
+    def _age(birth_date: date) -> int:
+        today = date.today()
+        return (
+            today.year
+            - birth_date.year
+            - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        )
 
     def _create_records(
         self, rng: random.Random, patients: list[Patient], created_by
