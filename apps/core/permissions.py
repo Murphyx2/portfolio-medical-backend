@@ -59,6 +59,17 @@ class IsAdminOrReceptionist(BasePermission):
         )
 
 
+class IsAdminOrCenterManager(BasePermission):
+    """Admins and center managers may manage services."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_admin or request.user.is_center_manager)
+        )
+
+
 class IsDoctorOrReceptionist(BasePermission):
     def has_permission(self, request, view):
         return bool(

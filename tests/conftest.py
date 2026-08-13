@@ -62,6 +62,11 @@ def nurse_user(make_user):
 
 
 @pytest.fixture
+def center_manager_user(make_user):
+    return make_user("cm", User.Role.CENTER_MANAGER)
+
+
+@pytest.fixture
 def auth_client(api_client):
     def _auth(user):
         api_client.force_authenticate(user=user)
