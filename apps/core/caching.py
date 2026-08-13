@@ -37,6 +37,8 @@ _CACHE_INVALIDATION_MAP = {
     "arsprogram": ("ars", "arsprogram"),
     "medicalcenter": ("medicalcenter",),
     "doctorcenterbinding": ("medicalcenter", "doctorcenterbinding"),
+    "service": ("service",),
+    "servicetype": ("servicetype", "service"),
 }
 
 

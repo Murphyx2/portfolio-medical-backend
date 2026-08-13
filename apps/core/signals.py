@@ -14,10 +14,19 @@ def connect_cache_invalidation() -> None:
     from apps.ars.models import ARS, ARSProgram
     from apps.centers.models import DoctorCenterBinding, MedicalCenter
     from apps.medicines.models import Medicine
+    from apps.services.models import Service, ServiceType
 
     def _invalidate(sender, instance, **kwargs):
         invalidate_for_instance(instance)
 
-    for model in (Medicine, ARS, ARSProgram, MedicalCenter, DoctorCenterBinding):
+    for model in (
+        Medicine,
+        ARS,
+        ARSProgram,
+        MedicalCenter,
+        DoctorCenterBinding,
+        Service,
+        ServiceType,
+    ):
         post_save.connect(_invalidate, sender=model, weak=False)
         post_delete.connect(_invalidate, sender=model, weak=False)
