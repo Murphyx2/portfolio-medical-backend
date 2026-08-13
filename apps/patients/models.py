@@ -30,7 +30,7 @@ class Patient(TimestampedModel, SoftDeleteModel):
     phone = EncryptedCharField(blank=True)
     address = EncryptedTextField(blank=True)
     email = EncryptedCharField(blank=True)
-    cedula = EncryptedCharField(blank=True)
+    cedula = EncryptedCharField()
     nss = EncryptedCharField(blank=True)
 
     # Plaintext last-4-digit index of cedula/NSS (same documented tradeoff as
@@ -76,6 +76,24 @@ class Patient(TimestampedModel, SoftDeleteModel):
         ordering = ["search_name"]
         indexes = [
             models.Index(fields=["search_name"]),
+        ]
+        constraints = [
+            # A cedula/NSS must match exactly one patient. Scoped to active
+            # rows -- soft-deleting a patient (apps/core/mixins.py) frees
+            # their cedula/NSS for reuse, matching the SoftDeleteModel
+            # convention used everywhere else in this codebase. NSS is
+            # optional, so its constraint additionally excludes the blank
+            # (no-NSS) case.
+            models.UniqueConstraint(
+                fields=["cedula_hash"],
+                condition=models.Q(active=True) & ~models.Q(cedula_hash=""),
+                name="uniq_active_patient_cedula_hash",
+            ),
+            models.UniqueConstraint(
+                fields=["nss_hash"],
+                condition=models.Q(active=True) & ~models.Q(nss_hash=""),
+                name="uniq_active_patient_nss_hash",
+            ),
         ]
 
     def save(self, *args, **kwargs):

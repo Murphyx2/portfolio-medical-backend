@@ -164,8 +164,8 @@ def test_patient_ordering_by_related_ars_name(auth_client, admin_user, db):
     # ars_id "SE"/"SM" are already seeded by a data migration, so use free ids.
     a1 = ARS.objects.create(ars_id="AA", name="Alpha")
     a2 = ARS.objects.create(ars_id="ZZ", name="Zulu")
-    _patient(first_name="Bee", last_name="B", ars=a1)
-    _patient(first_name="Abe", last_name="A", ars=a2)
+    _patient(first_name="Bee", last_name="B", ars=a1, cedula="11100000001", nss="")
+    _patient(first_name="Abe", last_name="A", ars=a2, cedula="11100000002", nss="")
     res = auth_client(admin_user).get("/api/patients/?ordering=ars__name&page_size=20")
     assert res.data["results"][0]["full_name"] == "Bee B"
     res = auth_client(admin_user).get("/api/patients/?ordering=-ars__name&page_size=20")
@@ -353,8 +353,8 @@ def test_appointments_search_and_ordering(auth_client, admin_user, db, make_user
     prof = DoctorProfile.objects.create(
         user=doc, specialty="GP", license_number="L1", contact_phone="8095550001"
     )
-    p1 = _patient(first_name="Ana", last_name="Perez")
-    p2 = _patient(first_name="Luis", last_name="Perez")
+    p1 = _patient(first_name="Ana", last_name="Perez", cedula="11100000003", nss="")
+    p2 = _patient(first_name="Luis", last_name="Perez", cedula="11100000004", nss="")
     base = timezone.now()
     Appointment.objects.create(
         patient=p1, doctor=prof, date_time=base, duration_minutes=30, created_by=admin_user
