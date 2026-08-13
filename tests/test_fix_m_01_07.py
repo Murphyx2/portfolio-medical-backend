@@ -25,6 +25,7 @@ def _patient(**overrides):
         "first_name": "Jane",
         "last_name": "Doe",
         "gender": "FEMALE",
+        "birth_date": "1990-05-12",
         "phone": "8095550100",
         "cedula": "00112345678",
         "nss": "98765432109",
@@ -232,6 +233,7 @@ def test_admin_add_patient_writes_audit_log(client, admin_user):
             "first_name": "Ana",
             "last_name": "Admin",
             "gender": "FEMALE",
+            "birth_date": "1990-05-12",
             "cedula": "00100000001",
         },
     )
@@ -250,6 +252,7 @@ def test_admin_change_patient_writes_audit_log(client, admin_user):
             "first_name": "Jane",
             "last_name": "Renamed",
             "gender": "FEMALE",
+            "birth_date": patient.birth_date,
             "phone": patient.phone,
             "address": patient.address,
             "email": patient.email,

@@ -18,7 +18,7 @@ def many_patients(db):
         Patient.objects.create(
             first_name=f"P{i:02d}",
             last_name="Seed",
-            gender="UNSPECIFIED",
+            gender="MALE" if i % 2 == 0 else "FEMALE",
         )
 
 

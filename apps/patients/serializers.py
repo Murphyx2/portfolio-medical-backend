@@ -58,11 +58,14 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        # Cedula is required on both create and update -- a patient can never
-        # be left/made cedula-less (matches the DB uniqueness constraint,
-        # which assumes every active patient has one).
+        # Cedula/birth_date/gender are required on both create and update --
+        # a patient can never be left/made without any of these (matches the
+        # DB-level requiredness on the model fields).
         fields["cedula"].required = True
         fields["cedula"].allow_blank = False
+        fields["birth_date"].required = True
+        fields["birth_date"].allow_blank = False
+        fields["gender"].required = True
         if not can_view_inactive(self._request_user()):
             fields["active"].read_only = True
         return fields
@@ -128,7 +131,7 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def validate_birth_date(self, value: str) -> str:
         if not value:
-            return value
+            raise serializers.ValidationError("Birth date is required.")
         try:
             bd = date.fromisoformat(value)
         except (TypeError, ValueError):

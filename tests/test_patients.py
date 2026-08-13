@@ -95,6 +95,67 @@ def test_update_patient_keeps_encryption(auth_client, receptionist_user):
 
 
 # ---------------------------------------------------------------------------
+# gender/birth_date: mandatory, only MALE/FEMALE
+# ---------------------------------------------------------------------------
+
+
+def test_birth_date_required_on_create(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(birth_date=""), format="json"
+    )
+    assert res.status_code == 400, res.data
+    assert "birth_date" in res.data
+
+
+def test_birth_date_omitted_rejected_on_create(auth_client, receptionist_user):
+    payload = _patient_payload()
+    del payload["birth_date"]
+    res = auth_client(receptionist_user).post("/api/patients/", payload, format="json")
+    assert res.status_code == 400, res.data
+    assert "birth_date" in res.data
+
+
+def test_birth_date_blanked_rejected_on_update(auth_client, receptionist_user):
+    created = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(), format="json"
+    )
+    assert created.status_code == 201, created.data
+    res = auth_client(receptionist_user).patch(
+        f"/api/patients/{created.data['id']}/", {"birth_date": ""}, format="json"
+    )
+    assert res.status_code == 400, res.data
+    assert "birth_date" in res.data
+
+
+def test_gender_required_on_create(auth_client, receptionist_user):
+    payload = _patient_payload()
+    del payload["gender"]
+    res = auth_client(receptionist_user).post("/api/patients/", payload, format="json")
+    assert res.status_code == 400, res.data
+    assert "gender" in res.data
+
+
+def test_gender_other_no_longer_a_valid_choice(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(gender="OTHER"), format="json"
+    )
+    assert res.status_code == 400, res.data
+    assert "gender" in res.data
+
+
+def test_gender_male_and_female_still_accepted(auth_client, receptionist_user):
+    cedulas = {"MALE": "40100000001", "FEMALE": "40100000002"}
+    for gender, cedula in cedulas.items():
+        res = auth_client(receptionist_user).post(
+            "/api/patients/",
+            _patient_payload(cedula=cedula, gender=gender),
+            format="json",
+        )
+        assert res.status_code == 201, res.data
+        assert res.data["gender"] == gender
+
+
+# ---------------------------------------------------------------------------
 # query-count regressions (select_related + Exists doctor-scoping)
 # ---------------------------------------------------------------------------
 

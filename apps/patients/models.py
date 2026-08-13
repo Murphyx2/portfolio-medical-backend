@@ -11,19 +11,19 @@ class Patient(TimestampedModel, SoftDeleteModel):
     class Gender(models.TextChoices):
         MALE = "MALE", "Male"
         FEMALE = "FEMALE", "Female"
-        OTHER = "OTHER", "Other"
-        UNSPECIFIED = "UNSPECIFIED", "Unspecified"
 
     # Names/birth date are PII too: encrypted at rest. A plaintext lowercase
     # `search_name` index column keeps name search working (documented tradeoff).
     first_name = EncryptedCharField()
     last_name = EncryptedCharField()
-    birth_date = EncryptedCharField(null=True, blank=True)
+    birth_date = EncryptedCharField()
     search_name = models.CharField(max_length=201, blank=True)
+    # No default -- gender is mandatory, same as cedula/birth_date (no
+    # blank=True/null=True/default means DRF's automatic field generation
+    # marks it required with no silently-applied value).
     gender = models.CharField(
         max_length=20,
         choices=Gender.choices,
-        default=Gender.UNSPECIFIED,
     )
 
     # Encrypted PII at rest
