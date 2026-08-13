@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
 
+from apps.core.encryption import blind_index_digits
 from apps.core.services import can_view_inactive, is_masked_role
 from apps.core.validators import validate_phone
 from apps.patients.models import Patient
@@ -57,9 +58,11 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        if self.instance is None:
-            fields["cedula"].required = True
-            fields["cedula"].allow_blank = False
+        # Cedula is required on both create and update -- a patient can never
+        # be left/made cedula-less (matches the DB uniqueness constraint,
+        # which assumes every active patient has one).
+        fields["cedula"].required = True
+        fields["cedula"].allow_blank = False
         if not can_view_inactive(self._request_user()):
             fields["active"].read_only = True
         return fields
@@ -84,6 +87,20 @@ class PatientSerializer(serializers.ModelSerializer):
             - ((today.month, today.day) < (bd.month, bd.day))
         )
 
+    def _check_unique_digits(self, field_name: str, digits: str, message: str) -> None:
+        # cedula/nss are encrypted at rest (non-deterministic ciphertext), so
+        # uniqueness can only be checked via the deterministic blind-index
+        # hash column -- the same column the DB constraint targets. Queries
+        # the active-only default manager to match the constraint's
+        # active=True condition (a soft-deleted patient's identifiers are
+        # free to reuse).
+        digest = blind_index_digits(digits)
+        qs = Patient.objects.filter(**{f"{field_name}_hash": digest})
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(message)
+
     def validate_cedula(self, value: str) -> str:
         if value:
             digits = re.sub(r"\D", "", value)
@@ -91,6 +108,9 @@ class PatientSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Cedula must contain exactly 11 digits."
                 )
+            self._check_unique_digits(
+                "cedula", digits, "A patient with this cedula already exists."
+            )
             return digits
         return value
 
@@ -130,6 +150,9 @@ class PatientSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("NSS must contain digits only.")
         if len(normalized) > 11:
             raise serializers.ValidationError("NSS must be at most 11 digits.")
+        self._check_unique_digits(
+            "nss", normalized, "A patient with this NSS already exists."
+        )
         return normalized
 
     def validate(self, attrs):

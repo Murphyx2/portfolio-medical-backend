@@ -116,7 +116,10 @@ def test_empty_cedula_rejected_on_create(auth_client, receptionist_user):
     assert "cedula" in res.data
 
 
-def test_empty_cedula_still_allowed_on_update(auth_client, receptionist_user):
+def test_empty_cedula_rejected_on_update(auth_client, receptionist_user):
+    # Cedula is required on every write, not just create -- a patient can
+    # never be left/made cedula-less (business rule tightened after this
+    # test was first written).
     client = auth_client(receptionist_user)
     created = client.post(
         "/api/patients/", _payload(cedula=DIGITS), format="json"
@@ -128,8 +131,8 @@ def test_empty_cedula_still_allowed_on_update(auth_client, receptionist_user):
         {"cedula": ""},
         format="json",
     )
-    assert patched.status_code == 200, patched.data
-    assert patched.data["cedula"] == ""
+    assert patched.status_code == 400, patched.data
+    assert "cedula" in patched.data
 
 
 def test_cedula_encrypted_at_rest_is_digits_only(auth_client, receptionist_user):

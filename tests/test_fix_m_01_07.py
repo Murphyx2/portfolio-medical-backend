@@ -228,7 +228,12 @@ def test_admin_add_patient_writes_audit_log(client, admin_user):
     client.force_login(admin_user)
     res = client.post(
         "/admin/patients/patient/add/",
-        {"first_name": "Ana", "last_name": "Admin", "gender": "FEMALE"},
+        {
+            "first_name": "Ana",
+            "last_name": "Admin",
+            "gender": "FEMALE",
+            "cedula": "00100000001",
+        },
     )
     assert res.status_code == 302, res.status_code
     assert AuditLog.objects.filter(
