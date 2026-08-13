@@ -10,9 +10,18 @@ class MedicalCenter(TimestampedModel, SoftDeleteModel):
     address = models.CharField(max_length=300)
     phone = models.CharField(max_length=30)
     email = models.EmailField(blank=True)
+    # At most one center may be default -- enforced in save() below (same
+    # invariant-in-save() convention as User.save() stripping is_staff on
+    # role change), not just at the serializer/view layer.
+    is_default = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            MedicalCenter.objects.exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.name

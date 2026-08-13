@@ -15,7 +15,7 @@ class MedicalCenterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MedicalCenter
-        fields = ["id", "name", "code", "address", "phone", "email", "doctor_count", "active"]
+        fields = ["id", "name", "code", "address", "phone", "email", "is_default", "doctor_count", "active"]
 
     def get_fields(self):
         fields = super().get_fields()

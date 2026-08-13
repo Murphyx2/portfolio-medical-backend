@@ -7,9 +7,15 @@ from apps.core.services import is_masked_role, patient_ids_matching_digits
 from apps.patients.models import Patient
 
 
-def patient_age(patient) -> int | None:
-    """Age in years from the (encrypted) birth date; None when absent."""
-    bd = patient.birth_date
+def patient_age(patient_or_birth_date) -> int | None:
+    """Age in years from a birth date; None when absent/unparseable.
+
+    Accepts either a `Patient` instance (reads its `birth_date`) or a raw
+    birth-date value (str/date) directly, so callers validating incoming
+    request data (which isn't a saved instance yet) can reuse the same
+    arithmetic as callers reading an existing row.
+    """
+    bd = getattr(patient_or_birth_date, "birth_date", patient_or_birth_date)
     if not bd:
         return None
     if isinstance(bd, str):

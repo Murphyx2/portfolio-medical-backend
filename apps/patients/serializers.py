@@ -9,7 +9,22 @@ from rest_framework import serializers
 from apps.core.encryption import blind_index_digits
 from apps.core.services import can_view_inactive, is_masked_role
 from apps.core.validators import validate_phone
+from apps.patients.filters import patient_age
 from apps.patients.models import Patient
+
+# validate() only re-checks guardian requiredness when one of these keys is
+# present in the incoming attrs (or on create) -- otherwise a PATCH touching
+# an unrelated field (e.g. "phone") would re-trigger the check against a
+# blank guardian_* fallback and permanently lock out any existing minor
+# whose guardian info isn't on file yet.
+_GUARDIAN_TRIGGER_KEYS = (
+    "birth_date",
+    "has_guardian",
+    "guardian_first_name",
+    "guardian_last_name",
+    "guardian_cedula",
+    "guardian_phone",
+)
 
 
 def _mask(value: str) -> str:
@@ -28,6 +43,7 @@ class PatientSerializer(serializers.ModelSerializer):
         source="ars_program.name", read_only=True, default=None
     )
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
+    center_code = serializers.CharField(source="center.code", read_only=True, default=None)
 
     class Meta:
         model = Patient
@@ -41,6 +57,7 @@ class PatientSerializer(serializers.ModelSerializer):
             "gender",
             "center",
             "center_name",
+            "center_code",
             "phone",
             "address",
             "email",
@@ -50,6 +67,12 @@ class PatientSerializer(serializers.ModelSerializer):
             "ars_name",
             "ars_program",
             "ars_program_name",
+            "has_guardian",
+            "guardian_first_name",
+            "guardian_last_name",
+            "guardian_cedula",
+            "guardian_nss",
+            "guardian_phone",
             "active",
             "created_at",
             "updated_at",
@@ -75,20 +98,7 @@ class PatientSerializer(serializers.ModelSerializer):
         return getattr(request, "user", None) if request else None
 
     def get_age(self, obj) -> int | None:
-        if not obj.birth_date:
-            return None
-        bd = obj.birth_date
-        if isinstance(bd, str):
-            try:
-                bd = date.fromisoformat(bd)
-            except ValueError:
-                return None
-        today = date.today()
-        return (
-            today.year
-            - bd.year
-            - ((today.month, today.day) < (bd.month, bd.day))
-        )
+        return patient_age(obj)
 
     def _check_unique_digits(self, field_name: str, digits: str, message: str) -> None:
         # cedula/nss are encrypted at rest (non-deterministic ciphertext), so
@@ -158,6 +168,29 @@ class PatientSerializer(serializers.ModelSerializer):
         )
         return normalized
 
+    def validate_guardian_cedula(self, value: str) -> str:
+        if value:
+            digits = re.sub(r"\D", "", value)
+            if len(digits) != 11:
+                raise serializers.ValidationError(
+                    "Guardian cedula must contain exactly 11 digits."
+                )
+            return digits
+        return value
+
+    def validate_guardian_nss(self, value: str) -> str:
+        if not value:
+            return value
+        normalized = unicodedata.normalize("NFKC", str(value))
+        if not normalized.isascii() or not normalized.isdigit():
+            raise serializers.ValidationError("Guardian NSS must contain digits only.")
+        if len(normalized) > 11:
+            raise serializers.ValidationError("Guardian NSS must be at most 11 digits.")
+        return normalized
+
+    def validate_guardian_phone(self, value: str) -> str:
+        return validate_phone(value)
+
     def validate(self, attrs):
         ars = attrs.get("ars")
         if ars is None and self.instance is not None:
@@ -178,6 +211,38 @@ class PatientSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"center": "You are not approved to work at this center."}
                 )
+
+        # Guardian info is required for minors, but only re-checked when the
+        # request is a create or actually touches one of the relevant fields
+        # -- otherwise a PATCH to an unrelated field (e.g. "phone") would
+        # re-run this against a blank guardian_* fallback and permanently
+        # lock out any existing minor whose guardian info isn't on file yet
+        # (e.g. every minor already in the seeded dev data). Same pattern as
+        # the ars_program check above, which only fires when ars_program is
+        # actually present in attrs.
+        if self.instance is None or any(k in attrs for k in _GUARDIAN_TRIGGER_KEYS):
+            birth_date = attrs.get(
+                "birth_date", self.instance.birth_date if self.instance else None
+            )
+            has_guardian = attrs.get(
+                "has_guardian", self.instance.has_guardian if self.instance else True
+            )
+            age = patient_age(birth_date)
+            if age is not None and age < 18 and has_guardian:
+                errors = {}
+                for field in (
+                    "guardian_first_name",
+                    "guardian_last_name",
+                    "guardian_cedula",
+                    "guardian_phone",
+                ):
+                    value = attrs.get(
+                        field, getattr(self.instance, field) if self.instance else ""
+                    )
+                    if not value:
+                        errors[field] = "Required when the patient is a minor with a guardian on file."
+                if errors:
+                    raise serializers.ValidationError(errors)
         return attrs
 
     def to_representation(self, instance):
@@ -187,7 +252,18 @@ class PatientSerializer(serializers.ModelSerializer):
         if user and user.is_authenticated and is_masked_role(user):
             # IT and center managers see redacted contact PII, identifiers,
             # and names/birth date.
-            for field in ("phone", "address", "email", "cedula", "nss"):
+            for field in (
+                "phone",
+                "address",
+                "email",
+                "cedula",
+                "nss",
+                "guardian_first_name",
+                "guardian_last_name",
+                "guardian_cedula",
+                "guardian_nss",
+                "guardian_phone",
+            ):
                 data[field] = _mask(data[field])
             data["first_name"] = _mask(data["first_name"])
             data["last_name"] = _mask(data["last_name"])

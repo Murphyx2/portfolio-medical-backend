@@ -6,8 +6,8 @@ from apps.core.admin import AuditModelAdmin
 
 @admin.register(MedicalCenter)
 class MedicalCenterAdmin(AuditModelAdmin):
-    list_display = ("name", "code", "phone", "email", "active")
-    list_filter = ("active",)
+    list_display = ("name", "code", "phone", "email", "is_default", "active")
+    list_filter = ("is_default", "active")
     search_fields = ("name", "code")
 
 

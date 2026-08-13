@@ -72,6 +72,18 @@ class Patient(TimestampedModel, SoftDeleteModel):
         related_name="patients",
     )
 
+    # Guardian/parent info, collected for minors (see PatientSerializer.validate
+    # for the conditional-required rule). No last4/hash/search columns here --
+    # unlike the patient's own cedula/nss, a guardian's identifiers are
+    # intentionally NOT unique (siblings can share the same guardian) and are
+    # never searched on.
+    has_guardian = models.BooleanField(default=True)
+    guardian_first_name = EncryptedCharField(blank=True, default="")
+    guardian_last_name = EncryptedCharField(blank=True, default="")
+    guardian_cedula = EncryptedCharField(blank=True, default="")
+    guardian_nss = EncryptedCharField(blank=True, default="")
+    guardian_phone = EncryptedCharField(blank=True, default="")
+
     class Meta:
         ordering = ["search_name"]
         indexes = [
