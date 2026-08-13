@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -37,3 +39,20 @@ def decrypt_token(value: str) -> str:
 
 def is_encrypted(value: str) -> bool:
     return value.startswith("gAAAA")
+
+
+def _blind_index_key() -> bytes:
+    """Derived from PII_FIELD_KEY via domain separation -- no second secret to
+    provision, and it rotates automatically whenever PII_FIELD_KEY does."""
+    return hmac.new(
+        settings.PII_FIELD_KEY.encode(), b"patient-id-blind-index-v1", hashlib.sha256
+    ).digest()
+
+
+def blind_index_digits(value: str) -> str:
+    """Keyed hash of the complete digits-only identifier (cedula/NSS) for exact-
+    match search without ever decrypting the field (see M-01 in PROGRESS.md)."""
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if not digits:
+        return ""
+    return hmac.new(_blind_index_key(), digits.encode(), hashlib.sha256).hexdigest()
