@@ -13,7 +13,7 @@ Useful when a key was ever exposed (e.g. committed to version control).
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from apps.core.encryption import get_cipher
+from apps.core.encryption import blind_index_digits, get_cipher
 from apps.core.fields import EncryptedCharField, EncryptedTextField
 from apps.patients.models import Patient
 from apps.records.models import ConsultationLog, MedicalRecord
@@ -61,6 +61,14 @@ class Command(BaseCommand):
                             )
                             continue
                         updates[name] = new_cipher.encrypt(plain.encode()).decode()
+                        if model is Patient and name in ("cedula", "nss"):
+                            # The blind-index key is derived from PII_FIELD_KEY
+                            # (settings.PII_FIELD_KEY), so it rotates along with
+                            # it -- skipping this would strand pre-rotation
+                            # patients' hashes under the old key, breaking
+                            # full-number search until each is individually
+                            # re-saved.
+                            updates[f"{name}_hash"] = blind_index_digits(plain)
                     if updates:
                         set_clause = ", ".join(f"{n} = %s" for n in updates)
                         cursor.execute(

@@ -1,6 +1,7 @@
 from django.core.signing import BadSignature, TimestampSigner
 from django.db.models import Q
 
+from apps.core.encryption import blind_index_digits
 from apps.core.models import AuditLog
 
 # How long a signed media URL stays valid (seconds).
@@ -8,14 +9,20 @@ MEDIA_TOKEN_MAX_AGE = 60 * 60
 
 
 def patient_ids_matching_digits(term: str):
-    """Patient ids whose cedula/NSS trailing digits match a search term.
+    """Patient ids whose cedula/NSS match a search term's digits.
 
     Non-digit characters (spaces, hyphens from the formatted display like
-    ``001-1234567-8``) are stripped before matching. The match runs in SQL on
-    the plaintext ``cedula_last4``/``nss_last4`` index columns (M-01) so a
-    digit search never has to decrypt every row in Python: terms of 4+ digits
-    compare against the stored last-4 exactly, shorter terms use a substring
-    match on those columns.
+    ``001-1234567-8``) are stripped before matching. The match runs in SQL so
+    a digit search never has to decrypt every row in Python (M-01):
+
+    - 5+ digits are matched exactly against the ``cedula_hash``/``nss_hash``
+      blind index (a keyed hash of the *complete* number) -- this is precise,
+      unlike the last-4 index, which can false-positive across patients who
+      merely share the same trailing 4 digits. A 5+ digit term that isn't a
+      complete cedula/NSS correctly matches nothing.
+    - Fewer than 5 digits keeps the original last-4 index behavior: 4 digits
+      match ``cedula_last4``/``nss_last4`` exactly, fewer use a substring
+      match on those columns.
 
     Returns a ``values_list("id")`` queryset so the caller can use it as an
     ``id__in`` subquery; the underlying query runs once, in the database.
@@ -25,11 +32,15 @@ def patient_ids_matching_digits(term: str):
 
     if not digits:
         return Patient.objects.none().values_list("id", flat=True)
-    tail = digits[-4:]
-    if len(digits) >= 4:
-        q = Q(cedula_last4=tail) | Q(nss_last4=tail)
+    if len(digits) >= 5:
+        digest = blind_index_digits(digits)
+        q = Q(cedula_hash=digest) | Q(nss_hash=digest)
     else:
-        q = Q(cedula_last4__icontains=tail) | Q(nss_last4__icontains=tail)
+        tail = digits[-4:]
+        if len(digits) >= 4:
+            q = Q(cedula_last4=tail) | Q(nss_last4=tail)
+        else:
+            q = Q(cedula_last4__icontains=tail) | Q(nss_last4__icontains=tail)
     return Patient.objects.filter(q).values_list("id", flat=True)
 
 

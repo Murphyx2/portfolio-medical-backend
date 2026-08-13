@@ -102,6 +102,53 @@ def test_patient_last4_index_populated_on_save(db):
     assert p.nss_last4 == "2109"
 
 
+def test_patient_full_cedula_search_excludes_last4_false_positive(
+    auth_client, admin_user, db
+):
+    # Two patients sharing the same trailing 4 digits: a full-number search
+    # for one must not also return the other (the blind-index hash match is
+    # exact, unlike the last-4 index alone).
+    target = _patient(
+        first_name="Target", last_name="One", cedula="11122335678", nss="00000015678"
+    )
+    _patient(
+        first_name="Sibling", last_name="Two", cedula="99988885678", nss="11111125678"
+    )
+    res = auth_client(admin_user).get("/api/patients/?search=11122335678&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Target One"}
+    assert target.cedula_last4 == "5678"
+
+
+def test_patient_partial_digit_search_not_complete_number_returns_nothing(
+    auth_client, admin_user, mixed_patients
+):
+    # 5+ digits that aren't a complete cedula/NSS can't match the hash index
+    # (a cryptographic hash can't do partial matching) -- unlike the old
+    # last-4-only behavior, this correctly returns nothing instead of
+    # same-last-4 false positives.
+    res = auth_client(admin_user).get("/api/patients/?search=001084920&page_size=20")
+    assert res.data["count"] == 0
+
+
+def test_patient_hash_index_populated_on_save(db):
+    from apps.core.encryption import blind_index_digits
+
+    p = Patient.objects.create(
+        first_name="A", last_name="B", cedula="00112345678", nss="98765432109"
+    )
+    assert p.cedula_hash == blind_index_digits("00112345678")
+    assert p.nss_hash == blind_index_digits("98765432109")
+
+
+def test_patient_search_by_cedula_still_masked_for_masked_role(
+    auth_client, it_user, mixed_patients
+):
+    # Full-number search must still be a no-op for masked roles (same
+    # anti-oracle rule as name/last-4 search).
+    res = auth_client(it_user).get("/api/patients/?search=01001084920&page_size=20")
+    assert res.data["count"] == 3
+
+
 # ---------------------------------------------------------------------------
 # patients: ordering
 # ---------------------------------------------------------------------------
