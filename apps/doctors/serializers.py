@@ -21,6 +21,9 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         queryset=get_user_model().objects.all(),
         write_only=True,
     )
+    default_room_name = serializers.CharField(
+        source="default_room.name", read_only=True, default=None
+    )
 
     class Meta:
         model = DoctorProfile
@@ -35,6 +38,8 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "contact_phone",
             "contact_email",
             "bio",
+            "default_room",
+            "default_room_name",
             "active",
         ]
 

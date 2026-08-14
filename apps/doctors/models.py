@@ -15,6 +15,16 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
     contact_phone = models.CharField(max_length=30)
     contact_email = models.EmailField(blank=True)
     bio = models.TextField(blank=True)
+    # Pre-fills the room field on the encounter admission form; still
+    # user-overridable per encounter, so a stale/inactive room never blocks
+    # admission (SET_NULL, not PROTECT).
+    default_room = models.ForeignKey(
+        "rooms.Room",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="default_for_doctors",
+    )
 
     class Meta:
         ordering = ["user__last_name", "user__first_name"]

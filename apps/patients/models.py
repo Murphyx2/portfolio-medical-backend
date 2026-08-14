@@ -84,6 +84,12 @@ class Patient(TimestampedModel, SoftDeleteModel):
     guardian_nss = EncryptedCharField(blank=True, default="")
     guardian_phone = EncryptedCharField(blank=True, default="")
 
+    # Persistent clinical safety flags (not per-visit) so the encounter
+    # summary card can show them with an O(1) lookup instead of scanning
+    # medical record history.
+    allergies = EncryptedTextField(blank=True, default="")
+    critical_conditions = EncryptedTextField(blank=True, default="")
+
     class Meta:
         ordering = ["search_name"]
         indexes = [
