@@ -82,6 +82,19 @@ class CanManageMedicines(BasePermission):
         )
 
 
+class CanManageRooms(BasePermission):
+    """Admins and IT may create/update rooms; receptionists may update
+    existing rooms but not create new ones (delete stays IsAdminOrIT-only,
+    see rooms/views.py get_permissions)."""
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method == "POST":
+            return request.user.is_admin or request.user.is_it
+        return request.user.is_admin or request.user.is_it or request.user.is_receptionist
+
+
 class IsAdminOrCenterManager(BasePermission):
     """Admins and center managers may manage services."""
 
