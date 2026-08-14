@@ -4,7 +4,7 @@ from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter
 
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import PatientDataPermission
+from apps.core.permissions import CanDeletePatient, PatientDataPermission
 from apps.core.services import is_masked_role, user_accessible_center_ids
 from apps.patients.filters import PatientSearchFilter
 from apps.patients.models import Patient
@@ -24,6 +24,11 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
         "ars_program__name",
         "center__name",
     ]
+
+    def get_permissions(self):
+        if self.request.method == "DELETE":
+            self.permission_classes = [CanDeletePatient]
+        return super().get_permissions()
 
     def get_queryset(self):
         qs = super().get_queryset()

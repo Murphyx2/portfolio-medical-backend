@@ -2,8 +2,8 @@
 
 - ARS seeds (SEMMA "SM" / SENASA "SE" + programs) are readable via /api/ars/
   for any authenticated staff user.
-- Write permission matrix on /api/ars/: only ADMIN and RECEPTIONIST may
-  create/update; other roles get 403; anonymous gets 401.
+- Write permission matrix on /api/ars/: only ADMIN may create/update/delete;
+  RECEPTIONIST is read-only; other roles get 403; anonymous gets 401.
 - Nested writable programs are reconciled on create/update (PATCH removes
   programs not sent).
 - Patient insurance: ars + matching ars_program accepted (201, echoes names);
@@ -12,8 +12,8 @@
   optional.
 - PII masking: ADMIN/DOCTOR/NURSE/RECEPTIONIST see full
   phone/address/email/cedula/nss; IT and CENTER_MANAGER see redacted ("•").
-- Audit: ARS create by receptionist logs AuditLog(CREATE, ARS); a real
-  login+logout token flow logs LOGIN and LOGOUT.
+- Audit: ARS create by admin logs AuditLog(CREATE, ARS); a real login+logout
+  token flow logs LOGIN and LOGOUT.
 """
 
 import pytest
@@ -82,16 +82,24 @@ def test_seeded_ars_visible_to_staff(auth_client, doctor_user):
 # /api/ars/ write permission matrix
 # ---------------------------------------------------------------------------
 
-def test_receptionist_can_create_and_patch_ars(auth_client, receptionist_user):
+def test_receptionist_cannot_create_or_patch_ars(auth_client, admin_user, receptionist_user):
+    # auth_client shares one underlying APIClient across calls within a test
+    # (force_authenticate mutates it in place) -- create the fixture ARS as
+    # admin first, so the client is left authenticated as receptionist for
+    # both assertions below.
+    existing = auth_client(admin_user).post(
+        "/api/ars/", {"ars_id": "RX2", "name": "ARS RX2"}, format="json"
+    )
+    assert existing.status_code == 201, existing.data
+
     client = auth_client(receptionist_user)
     created = client.post("/api/ars/", {"ars_id": "RX", "name": "ARS RX"}, format="json")
-    assert created.status_code == 201, created.data
-    assert created.data["ars_id"] == "RX"
+    assert created.status_code == 403, created.data
+
     patched = client.patch(
-        f"/api/ars/{created.data['id']}/", {"name": "ARS RX v2"}, format="json"
+        f"/api/ars/{existing.data['id']}/", {"name": "ARS RX2 v2"}, format="json"
     )
-    assert patched.status_code == 200, patched.data
-    assert patched.data["name"] == "ARS RX v2"
+    assert patched.status_code == 403, patched.data
 
 
 def test_admin_can_create_ars(auth_client, admin_user):
@@ -110,6 +118,15 @@ def test_non_manager_roles_cannot_create_ars(request, auth_client, role_fixture)
     assert res.status_code == 403, res.data
 
 
+def test_receptionist_cannot_delete_ars(auth_client, admin_user, receptionist_user):
+    created = auth_client(admin_user).post(
+        "/api/ars/", {"ars_id": "DL", "name": "ARS DL"}, format="json"
+    )
+    assert created.status_code == 201, created.data
+    res = auth_client(receptionist_user).delete(f"/api/ars/{created.data['id']}/")
+    assert res.status_code == 403, res.data
+
+
 def test_anonymous_cannot_create_ars(api_client):
     res = api_client.post(
         "/api/ars/", {"ars_id": "AN", "name": "ARS AN"}, format="json"
@@ -125,8 +142,8 @@ def test_anonymous_cannot_read_ars(api_client):
 # Nested programs handling
 # ---------------------------------------------------------------------------
 
-def test_create_ars_with_programs_returns_nested(auth_client, receptionist_user):
-    res = auth_client(receptionist_user).post(
+def test_create_ars_with_programs_returns_nested(auth_client, admin_user):
+    res = auth_client(admin_user).post(
         "/api/ars/",
         {"ars_id": "PX", "name": "ARS PX", "programs": [{"name": "X"}]},
         format="json",
@@ -136,8 +153,8 @@ def test_create_ars_with_programs_returns_nested(auth_client, receptionist_user)
     assert all("id" in p for p in res.data["programs"])
 
 
-def test_create_ars_with_zero_programs_allowed(auth_client, receptionist_user):
-    res = auth_client(receptionist_user).post(
+def test_create_ars_with_zero_programs_allowed(auth_client, admin_user):
+    res = auth_client(admin_user).post(
         "/api/ars/",
         {"ars_id": "Z0", "name": "ARS Z0", "programs": []},
         format="json",
@@ -147,8 +164,8 @@ def test_create_ars_with_zero_programs_allowed(auth_client, receptionist_user):
     assert ARS.objects.get(ars_id="Z0").programs.count() == 0
 
 
-def test_patch_ars_programs_removes_unsent(auth_client, receptionist_user):
-    client = auth_client(receptionist_user)
+def test_patch_ars_programs_removes_unsent(auth_client, admin_user):
+    client = auth_client(admin_user)
     created = client.post(
         "/api/ars/",
         {"ars_id": "RM", "name": "ARS RM", "programs": [{"name": "A"}, {"name": "B"}]},
@@ -316,13 +333,13 @@ def test_it_and_cm_see_redacted_pii(request, auth_client, make_user, role_fixtur
 # Audit trail
 # ---------------------------------------------------------------------------
 
-def test_audit_log_on_ars_create_by_receptionist(auth_client, receptionist_user):
-    res = auth_client(receptionist_user).post(
+def test_audit_log_on_ars_create_by_admin(auth_client, admin_user):
+    res = auth_client(admin_user).post(
         "/api/ars/", {"ars_id": "AU", "name": "ARS AU"}, format="json"
     )
     assert res.status_code == 201, res.data
     assert AuditLog.objects.filter(
-        action="CREATE", target_type="ARS", user=receptionist_user
+        action="CREATE", target_type="ARS", user=admin_user
     ).exists()
 
 

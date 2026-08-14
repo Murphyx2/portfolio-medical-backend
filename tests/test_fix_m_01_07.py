@@ -156,13 +156,13 @@ def _doctor_detail(auth_client, user, profile):
     return res.data
 
 
-def test_receptionist_sees_masked_doctor_contact(auth_client, receptionist_user, doctor_user):
+def test_receptionist_sees_unmasked_contact_but_masked_license(auth_client, receptionist_user, doctor_user):
     prof = _doctor_profile(doctor_user)
     data = _doctor_detail(auth_client, receptionist_user, prof)
     assert data["specialty"] == "Cardiology"
-    assert data["contact_phone"] != "8095550000" and "••••" in data["contact_phone"]
-    assert data["license_number"] != "LIC-123"
-    assert data["contact_email"] != "doc@example.com" and "••••" in data["contact_email"]
+    assert data["contact_phone"] == "8095550000"
+    assert data["contact_email"] == "doc@example.com"
+    assert data["license_number"] != "LIC-123" and "••••" in data["license_number"]
     assert data["bio"] is None
 
 

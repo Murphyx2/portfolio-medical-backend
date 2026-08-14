@@ -52,12 +52,16 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         if user and not (user.is_admin or user.is_it) and not is_self:
             # Doctor contact PII (M-03) is only for admins/IT and the doctor
             # themself; other staff keep name/specialty but see masked contact.
+            # Exception: receptionists need unmasked phone/email to coordinate
+            # appointments, but license_number/bio stay hidden from them too.
+            is_receptionist = getattr(user, "is_receptionist", False)
             if data.get("license_number"):
                 data["license_number"] = _mask(str(data["license_number"]))
-            if data.get("contact_phone"):
-                data["contact_phone"] = _mask(str(data["contact_phone"]))
-            if data.get("contact_email"):
-                data["contact_email"] = _mask(str(data["contact_email"]))
+            if not is_receptionist:
+                if data.get("contact_phone"):
+                    data["contact_phone"] = _mask(str(data["contact_phone"]))
+                if data.get("contact_email"):
+                    data["contact_email"] = _mask(str(data["contact_email"]))
             data["bio"] = None
         return data
 

@@ -167,6 +167,70 @@ def test_guardian_fields_masked_for_center_manager(auth_client, center_manager_u
     assert MASK in res.data["guardian_cedula"]
 
 
+def test_adult_cedula_still_required(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _payload(birth_date="1990-05-12", cedula=""),
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    assert "cedula" in res.data
+
+
+def test_minor_without_guardian_requires_own_cedula(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _payload(has_guardian=False, cedula=""),
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    assert "cedula" in res.data
+
+
+def test_minor_with_guardian_cedula_not_required(auth_client, receptionist_user):
+    payload = {**_payload(cedula=""), **_guardian_payload()}
+    res = auth_client(receptionist_user).post("/api/patients/", payload, format="json")
+    assert res.status_code == 201, res.data
+    assert res.data["cedula"] == ""
+
+
+def test_minor_with_guardian_blank_cedula_and_blank_guardian_cedula_rejected(
+    auth_client, receptionist_user
+):
+    payload = {
+        **_payload(cedula=""),
+        **_guardian_payload(guardian_cedula=""),
+    }
+    res = auth_client(receptionist_user).post("/api/patients/", payload, format="json")
+    assert res.status_code == 400, res.data
+    assert "guardian_cedula" in res.data
+    assert "cedula" not in res.data
+
+
+def test_patch_unrelated_field_does_not_relock_legacy_minor_blank_cedula(
+    auth_client, receptionist_user
+):
+    """Same PATCH-lockout regression as
+    test_patch_unrelated_field_does_not_relock_legacy_minor, but for a legacy
+    minor with BOTH blank guardian fields AND blank cedula -- the worst case
+    the new cedula-requiredness logic could newly break.
+    """
+    patient = Patient.objects.create(
+        first_name="Legacy3",
+        last_name="Minor",
+        birth_date="2015-01-01",
+        gender="MALE",
+        cedula="",
+    )
+    assert patient.has_guardian is True
+    assert patient.cedula == ""
+
+    res = auth_client(receptionist_user).patch(
+        f"/api/patients/{patient.id}/", {"phone": "8095551234"}, format="json"
+    )
+    assert res.status_code == 200, res.data
+
+
 def test_center_code_in_output(auth_client, receptionist_user):
     center = MedicalCenter.objects.create(
         name="Test Center", code="TC01", address="1 Test St", phone="8095550001"

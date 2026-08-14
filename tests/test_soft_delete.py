@@ -293,6 +293,47 @@ def test_cached_list_still_caches_normal_path(auth_client, receptionist_user):
 
 
 # ---------------------------------------------------------------------------
+# Receptionist RBAC: delete carve-out (Patients/Appointments)
+# ---------------------------------------------------------------------------
+
+
+def test_receptionist_cannot_delete_patient(auth_client, receptionist_user):
+    patient = _patient()
+    res = auth_client(receptionist_user).delete(f"/api/patients/{patient.id}/")
+    assert res.status_code == 403, res.data
+
+
+def test_doctor_can_delete_patient(auth_client, doctor_user):
+    patient = _patient()
+    res = auth_client(doctor_user).delete(f"/api/patients/{patient.id}/")
+    assert res.status_code == 204, res.data
+
+
+def test_receptionist_cannot_delete_appointment(auth_client, receptionist_user, doctor_user):
+    patient = _patient()
+    doctor = _doctor_profile(doctor_user)
+    appointment = _appointment(patient, doctor, receptionist_user)
+    res = auth_client(receptionist_user).delete(f"/api/appointments/{appointment.id}/")
+    assert res.status_code == 403, res.data
+
+
+def test_doctor_can_delete_appointment(auth_client, doctor_user, receptionist_user):
+    patient = _patient()
+    doctor = _doctor_profile(doctor_user)
+    appointment = _appointment(patient, doctor, receptionist_user)
+    res = auth_client(doctor_user).delete(f"/api/appointments/{appointment.id}/")
+    assert res.status_code == 204, res.data
+
+
+def test_admin_can_delete_appointment(auth_client, admin_user, doctor_user, receptionist_user):
+    patient = _patient()
+    doctor = _doctor_profile(doctor_user)
+    appointment = _appointment(patient, doctor, receptionist_user)
+    res = auth_client(admin_user).delete(f"/api/appointments/{appointment.id}/")
+    assert res.status_code == 204, res.data
+
+
+# ---------------------------------------------------------------------------
 # Django-admin parity: delete_model soft-deletes, bulk delete is removed
 # ---------------------------------------------------------------------------
 

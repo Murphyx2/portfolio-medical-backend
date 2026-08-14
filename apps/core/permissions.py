@@ -48,14 +48,37 @@ class IsReceptionist(BasePermission):
         )
 
 
-class IsAdminOrReceptionist(BasePermission):
-    """Admins and receptionists may manage ARS records."""
+class CanDeletePatient(BasePermission):
+    """Only admins and doctors may delete patients (receptionists excluded)."""
 
     def has_permission(self, request, view):
         return bool(
             request.user
             and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_receptionist)
+            and (request.user.is_admin or request.user.is_doctor)
+        )
+
+
+class CanDeleteAppointments(BasePermission):
+    """Only admins and doctors may delete appointments (receptionists excluded)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_admin or request.user.is_doctor)
+        )
+
+
+class CanManageMedicines(BasePermission):
+    """Admins, IT, and receptionists may create/update medicines; delete
+    stays IsAdminOrIT-only (see medicines/views.py get_permissions)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_admin or request.user.is_it or request.user.is_receptionist)
         )
 
 
