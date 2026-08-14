@@ -1,7 +1,14 @@
 from django.contrib import admin
 
 from apps.core.admin import AuditModelAdmin
-from apps.rooms.models import Room
+from apps.rooms.models import Room, RoomType
+
+
+@admin.register(RoomType)
+class RoomTypeAdmin(AuditModelAdmin):
+    list_display = ("name", "active")
+    list_filter = ("active",)
+    search_fields = ("name",)
 
 
 @admin.register(Room)
