@@ -11,6 +11,7 @@ from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
 from apps.core.services import client_ip, log_audit
+from apps.encounters.filters import EncounterSearchFilter
 from apps.encounters.models import Encounter, EncounterType, generate_encounter_number
 from apps.encounters.serializers import EncounterSerializer, EncounterTypeSerializer
 
@@ -39,7 +40,7 @@ class EncounterViewSet(AuditMixin, viewsets.ModelViewSet):
     ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
     serializer_class = EncounterSerializer
     permission_classes = [IsStaffUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, EncounterSearchFilter, OrderingFilter]
     filterset_fields = {
         "patient": ["exact"],
         "doctor": ["exact"],
@@ -48,13 +49,14 @@ class EncounterViewSet(AuditMixin, viewsets.ModelViewSet):
         "encounter_type": ["exact"],
         "created_at": ["gte", "lt"],
     }
-    search_fields = [
-        "encounter_number",
+    ordering_fields = [
+        "created_at",
+        "admitted_at",
+        "status",
+        "priority",
         "patient__search_name",
-        "doctor__user__last_name",
-        "chief_complaint",
+        "doctor__code",
     ]
-    ordering_fields = ["created_at", "admitted_at", "status", "priority", "patient__search_name"]
 
     def get_permissions(self):
         if self.request.method == "DELETE":

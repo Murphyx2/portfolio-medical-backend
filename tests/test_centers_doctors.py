@@ -148,3 +148,42 @@ def test_doctor_default_room_prefills_and_reports_name(auth_client, admin_user, 
     assert res.status_code == 200, res.data
     assert res.data["default_room"] == room.id
     assert res.data["default_room_name"] == "Room 1"
+
+
+def test_doctor_code_auto_generated_and_unique(make_user):
+    from apps.accounts.models import User
+
+    u1 = make_user("doc-code-1", User.Role.DOCTOR)
+    u2 = make_user("doc-code-2", User.Role.DOCTOR)
+    p1 = _create_doctor_profile(u1)
+    p2 = _create_doctor_profile(u2)
+
+    assert p1.code == f"DR{p1.id:04d}"
+    assert p2.code == f"DR{p2.id:04d}"
+    assert p1.code != p2.code
+
+
+def test_doctor_code_uppercased_when_provided(make_user):
+    from apps.accounts.models import User
+
+    user = make_user("doc-code-3", User.Role.DOCTOR)
+    profile = DoctorProfile.objects.create(
+        user=user,
+        specialty="Cardiology",
+        license_number="LIC-code-3",
+        contact_phone="8095550000",
+        code="dr-custom",
+    )
+    assert profile.code == "DR-CUSTOM"
+
+
+def test_doctor_code_stays_visible_even_when_license_number_is_masked(
+    auth_client, doctor_user, nurse_user
+):
+    profile = _create_doctor_profile(doctor_user)
+    res = auth_client(nurse_user).get(f"/api/doctors/profiles/{profile.id}/")
+    assert res.status_code == 200, res.data
+    # license_number is masked for non-admin/IT/self roles (M-03); code is
+    # explicitly non-PII and must stay legible regardless.
+    assert res.data["license_number"] != profile.license_number
+    assert res.data["code"] == profile.code

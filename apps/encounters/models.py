@@ -160,9 +160,11 @@ class EncounterService(TimestampedModel):
 
 
 def generate_encounter_number(encounter: Encounter, *, today=None) -> str:
-    """`ENC-{center_code|GEN}-{YYYYMMDD}-{seq:04d}`, retrying on a collision.
+    """`{YYYYMMDD}-{seq:03d}`, retrying on a collision.
 
-    No reservation table for the per-day sequence -- this optimistically
+    The sequence is a clinic-wide daily count of admitted patients (not
+    scoped per center), matching how front-desk staff think of "the Nth
+    admission today". No reservation table for it -- this optimistically
     tries the next candidate and lets the DB's unique constraint on
     `encounter_number` catch a race, retrying with seq+1 on IntegrityError
     (same optimistic-retry shape as the cedula/NSS blind-index uniqueness
@@ -171,10 +173,10 @@ def generate_encounter_number(encounter: Encounter, *, today=None) -> str:
     from django.db import IntegrityError, transaction
 
     today = today or timezone.localdate()
-    prefix = f"ENC-{encounter.center.code if encounter.center_id else 'GEN'}-{today:%Y%m%d}"
+    prefix = f"{today:%Y%m%d}"
     seq = Encounter.all_objects.filter(encounter_number__startswith=f"{prefix}-").count() + 1
     while True:
-        candidate = f"{prefix}-{seq:04d}"
+        candidate = f"{prefix}-{seq:03d}"
         try:
             with transaction.atomic():
                 Encounter.all_objects.filter(pk=encounter.pk).update(

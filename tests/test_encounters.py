@@ -361,3 +361,84 @@ def test_patient_summary_masked_for_it_and_center_manager(
 
     res = auth_client(admin_user).get(f"/api/encounters/{encounter.id}/")
     assert res.data["patient_info"]["allergies"] == "Penicillin"
+
+
+# ---------------------------------------------------------------------------
+# encounter_number format: clinic-wide daily sequence, no center/ENC prefix.
+# ---------------------------------------------------------------------------
+
+
+def test_encounter_number_is_date_and_daily_sequence(auth_client, admin_user, doctor_user):
+    from django.utils import timezone
+
+    doctor = _doctor(doctor_user)
+    room = _room()
+    encounter_type = _encounter_type(requires_diagnosis=False)
+    today = timezone.localdate()
+
+    first = Encounter.objects.create(
+        encounter_type=encounter_type, patient=_patient(cedula="00100000041"),
+        doctor=doctor, room=room, created_by=admin_user,
+    )
+    auth_client(admin_user).post(f"/api/encounters/{first.id}/admit/")
+    first.refresh_from_db()
+    assert first.encounter_number == f"{today:%Y%m%d}-001"
+
+    second = Encounter.objects.create(
+        encounter_type=encounter_type, patient=_patient(cedula="00100000042"),
+        doctor=doctor, room=room, created_by=admin_user,
+    )
+    auth_client(admin_user).post(f"/api/encounters/{second.id}/admit/")
+    second.refresh_from_db()
+    assert second.encounter_number == f"{today:%Y%m%d}-002"
+
+
+# ---------------------------------------------------------------------------
+# Search: patient's own cedula digits find the encounter; doctor code and
+# encounter number also match; masked roles get no digit-based patient
+# lookup (PII-existence-oracle guard).
+# ---------------------------------------------------------------------------
+
+
+def test_search_by_patient_cedula_digits(auth_client, admin_user, doctor_user):
+    doctor = _doctor(doctor_user)
+    target = _patient(cedula="00112345678")
+    other = _patient(cedula="00199999999")
+    Encounter.objects.create(
+        encounter_type=_encounter_type(), patient=target, doctor=doctor, created_by=admin_user
+    )
+    Encounter.objects.create(
+        encounter_type=_encounter_type(), patient=other, doctor=doctor, created_by=admin_user
+    )
+
+    res = auth_client(admin_user).get("/api/encounters/?search=00112345678")
+    assert res.data["count"] == 1
+    assert res.data["results"][0]["patient"] == target.id
+
+
+def test_search_by_doctor_code_and_encounter_number(auth_client, admin_user, doctor_user):
+    doctor = _doctor(doctor_user)
+    patient = _patient()
+    encounter = Encounter.objects.create(
+        encounter_type=_encounter_type(requires_diagnosis=False), patient=patient,
+        doctor=doctor, room=_room(), created_by=admin_user,
+    )
+    auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
+    encounter.refresh_from_db()
+
+    res = auth_client(admin_user).get(f"/api/encounters/?search={doctor.code}")
+    assert res.data["count"] == 1
+
+    res = auth_client(admin_user).get(f"/api/encounters/?search={encounter.encounter_number}")
+    assert res.data["count"] == 1
+
+
+def test_masked_role_gets_no_cedula_digit_search(auth_client, it_user, doctor_user, admin_user):
+    doctor = _doctor(doctor_user)
+    patient = _patient(cedula="00112345678")
+    Encounter.objects.create(
+        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+    )
+
+    res = auth_client(it_user).get("/api/encounters/?search=00112345678")
+    assert res.data["count"] == 0

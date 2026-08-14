@@ -47,7 +47,11 @@ class PatientSummarySerializer(serializers.ModelSerializer):
             "cedula",
             "allergies",
             "critical_conditions",
+            "ars",
             "ars_name",
+            "ars_program",
+            "has_guardian",
+            "guardian_cedula",
         ]
 
     def get_age(self, obj) -> int | None:
@@ -59,7 +63,7 @@ class DoctorLiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DoctorProfile
-        fields = ["id", "full_name", "specialty"]
+        fields = ["id", "code", "full_name", "specialty"]
 
 
 class EncounterDiagnosisSerializer(serializers.ModelSerializer):
@@ -274,7 +278,13 @@ class EncounterSerializer(serializers.ModelSerializer):
         if user and is_masked_role(user):
             patient_info = data.get("patient_info")
             if patient_info:
-                for field in ("full_name", "cedula", "allergies", "critical_conditions"):
+                for field in (
+                    "full_name",
+                    "cedula",
+                    "allergies",
+                    "critical_conditions",
+                    "guardian_cedula",
+                ):
                     if patient_info.get(field):
                         patient_info[field] = _mask(str(patient_info[field]))
                 patient_info["age"] = None

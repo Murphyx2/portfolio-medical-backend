@@ -33,6 +33,7 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "user_id",
             "username",
             "full_name",
+            "code",
             "specialty",
             "license_number",
             "contact_phone",
@@ -42,6 +43,7 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "default_room_name",
             "active",
         ]
+        read_only_fields = ["code"]
 
     def get_fields(self):
         fields = super().get_fields()

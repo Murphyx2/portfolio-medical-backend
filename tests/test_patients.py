@@ -248,3 +248,15 @@ def test_allergies_masked_for_it_role(auth_client, receptionist_user, it_user):
     )
     res = auth_client(it_user).get(f"/api/patients/{create.data['id']}/")
     assert res.data["allergies"] != "Penicillin"
+
+
+def test_creating_patient_auto_creates_placeholder_record(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(allergies="Penicillin"), format="json"
+    )
+    assert res.status_code == 201, res.data
+    record = MedicalRecord.objects.get(patient_id=res.data["id"])
+    assert record.created_by == receptionist_user
+    assert record.title == "Registro inicial"
+    assert "Penicillin" in record.notes
+    assert record.diagnosis == ""

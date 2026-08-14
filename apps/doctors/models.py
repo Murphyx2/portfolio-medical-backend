@@ -25,9 +25,25 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
         blank=True,
         related_name="default_for_doctors",
     )
+    # Short, non-PII identifier (unlike license_number, never masked) shown
+    # wherever a compact doctor reference is needed, e.g. the Encounters
+    # list table. Auto-generated from pk in save() below when left blank.
+    code = models.CharField(max_length=12, unique=True, null=True, blank=True)
 
     class Meta:
         ordering = ["user__last_name", "user__first_name"]
+
+    def save(self, *args, **kwargs):
+        if self.code:
+            self.code = self.code.upper()
+        super().save(*args, **kwargs)
+        if not self.code:
+            # pk is only available after the first save -- assign the
+            # derived code and persist it with a second, targeted write
+            # (same two-phase shape as Encounter.generate_encounter_number,
+            # whose value also depends on a not-yet-known pk/date).
+            self.code = f"DR{self.pk:04d}"
+            super().save(update_fields=["code"])
 
     @property
     def full_name(self) -> str:
