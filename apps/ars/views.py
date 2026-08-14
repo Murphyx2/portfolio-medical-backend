@@ -7,7 +7,7 @@ from apps.ars.models import ARS
 from apps.ars.serializers import ARSSerializer
 from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdminOrReceptionist, IsStaffUser
+from apps.core.permissions import IsAdmin, IsStaffUser
 
 
 class ARSViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
@@ -22,5 +22,5 @@ class ARSViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrReceptionist]
+            self.permission_classes = [IsAdmin]
         return super().get_permissions()

@@ -12,14 +12,15 @@ from apps.core.validators import validate_phone
 from apps.patients.filters import patient_age
 from apps.patients.models import Patient
 
-# validate() only re-checks guardian requiredness when one of these keys is
-# present in the incoming attrs (or on create) -- otherwise a PATCH touching
-# an unrelated field (e.g. "phone") would re-trigger the check against a
-# blank guardian_* fallback and permanently lock out any existing minor
-# whose guardian info isn't on file yet.
+# validate() only re-checks cedula/guardian requiredness when one of these
+# keys is present in the incoming attrs (or on create) -- otherwise a PATCH
+# touching an unrelated field (e.g. "phone") would re-trigger the check
+# against a blank cedula/guardian_* fallback and permanently lock out any
+# existing minor whose cedula/guardian info isn't on file yet.
 _GUARDIAN_TRIGGER_KEYS = (
     "birth_date",
     "has_guardian",
+    "cedula",
     "guardian_first_name",
     "guardian_last_name",
     "guardian_cedula",
@@ -81,11 +82,13 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        # Cedula/birth_date/gender are required on both create and update --
-        # a patient can never be left/made without any of these (matches the
-        # DB-level requiredness on the model fields).
-        fields["cedula"].required = True
-        fields["cedula"].allow_blank = False
+        # Birth_date/gender are required on both create and update -- a
+        # patient can never be left/made without these (matches the
+        # DB-level requiredness on the model fields). Cedula is conditionally
+        # required -- see validate(): always required for adults, but only
+        # required for minors when no guardian is on file (has_guardian=False).
+        fields["cedula"].required = False
+        fields["cedula"].allow_blank = True
         fields["birth_date"].required = True
         fields["birth_date"].allow_blank = False
         fields["gender"].required = True
@@ -212,11 +215,11 @@ class PatientSerializer(serializers.ModelSerializer):
                     {"center": "You are not approved to work at this center."}
                 )
 
-        # Guardian info is required for minors, but only re-checked when the
-        # request is a create or actually touches one of the relevant fields
-        # -- otherwise a PATCH to an unrelated field (e.g. "phone") would
-        # re-run this against a blank guardian_* fallback and permanently
-        # lock out any existing minor whose guardian info isn't on file yet
+        # Cedula/guardian requiredness is only re-checked when the request is
+        # a create or actually touches one of the relevant fields -- otherwise
+        # a PATCH to an unrelated field (e.g. "phone") would re-run this
+        # against a blank cedula/guardian_* fallback and permanently lock out
+        # any existing minor whose cedula/guardian info isn't on file yet
         # (e.g. every minor already in the seeded dev data). Same pattern as
         # the ars_program check above, which only fires when ars_program is
         # actually present in attrs.
@@ -228,8 +231,16 @@ class PatientSerializer(serializers.ModelSerializer):
                 "has_guardian", self.instance.has_guardian if self.instance else True
             )
             age = patient_age(birth_date)
-            if age is not None and age < 18 and has_guardian:
-                errors = {}
+            is_minor = age is not None and age < 18
+            errors = {}
+
+            # Adults always need a cedula; minors only need their own cedula
+            # when there's no guardian on file to identify them instead.
+            cedula = attrs.get("cedula", self.instance.cedula if self.instance else "")
+            if (not is_minor or not has_guardian) and not cedula:
+                errors["cedula"] = "Cedula is required."
+
+            if is_minor and has_guardian:
                 for field in (
                     "guardian_first_name",
                     "guardian_last_name",
@@ -241,8 +252,9 @@ class PatientSerializer(serializers.ModelSerializer):
                     )
                     if not value:
                         errors[field] = "Required when the patient is a minor with a guardian on file."
-                if errors:
-                    raise serializers.ValidationError(errors)
+
+            if errors:
+                raise serializers.ValidationError(errors)
         return attrs
 
     def to_representation(self, instance):

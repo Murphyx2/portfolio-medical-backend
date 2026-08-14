@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import CanManageAppointments, IsStaffUser
+from apps.core.permissions import CanDeleteAppointments, CanManageAppointments, IsStaffUser
 from apps.core.services import client_ip, log_audit, user_accessible_center_ids
 
 
@@ -42,7 +42,9 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
     ]
 
     def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
+        if self.request.method == "DELETE":
+            self.permission_classes = [CanDeleteAppointments]
+        elif self.request.method not in SAFE_METHODS:
             self.permission_classes = [CanManageAppointments]
         return super().get_permissions()
 

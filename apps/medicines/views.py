@@ -5,7 +5,7 @@ from rest_framework.permissions import SAFE_METHODS
 
 from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdminOrIT, IsStaffUser
+from apps.core.permissions import CanManageMedicines, IsAdminOrIT, IsStaffUser
 from apps.medicines.models import Medicine
 from apps.medicines.serializers import MedicineSerializer
 
@@ -21,6 +21,8 @@ class MedicineViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     ordering_fields = ["generic_name", "commercial_name", "concentration"]
 
     def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
+        if self.request.method == "DELETE":
             self.permission_classes = [IsAdminOrIT]
+        elif self.request.method not in SAFE_METHODS:
+            self.permission_classes = [CanManageMedicines]
         return super().get_permissions()
