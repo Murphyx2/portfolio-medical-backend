@@ -242,3 +242,85 @@ def test_center_code_in_output(auth_client, receptionist_user):
     )
     assert res.status_code == 201, res.data
     assert res.data["center_code"] == "TC01"
+
+
+# ---------------------------------------------------------------------------
+# Guardian cedula search (PatientSearchFilter, apps/patients/filters.py):
+# front-desk staff can find a minor by their guardian's cedula, the only ID
+# they may have on hand. Scoped to /api/patients/ (and everything that reuses
+# it, e.g. the Encounters admission form's patient picker) -- the Encounters
+# list's own search bar stays patient-cedula-only by separate design.
+# ---------------------------------------------------------------------------
+
+
+def test_search_by_guardian_cedula_finds_minor(auth_client, receptionist_user):
+    auth_client(receptionist_user).post(
+        "/api/patients/", {**_payload(), **_guardian_payload()}, format="json"
+    )
+    res = auth_client(receptionist_user).get("/api/patients/?search=00112345678")
+    assert res.data["count"] == 1
+    assert res.data["results"][0]["first_name"] == "Kid"
+
+
+def test_search_by_guardian_cedula_returns_all_siblings(auth_client, receptionist_user):
+    auth_client(receptionist_user).post(
+        "/api/patients/",
+        {**_payload(cedula="01098765401"), **_guardian_payload()},
+        format="json",
+    )
+    auth_client(receptionist_user).post(
+        "/api/patients/",
+        {
+            **_payload(first_name="Sibling", cedula="01098765402"),
+            **_guardian_payload(),
+        },
+        format="json",
+    )
+    res = auth_client(receptionist_user).get("/api/patients/?search=00112345678")
+    assert res.data["count"] == 2
+
+
+def test_encounters_search_does_not_match_guardian_cedula(
+    auth_client, admin_user, receptionist_user
+):
+    """The Encounters list's own search bar (EncounterSearchFilter) was
+    deliberately scoped to the patient's own cedula only -- confirms adding
+    guardian-cedula search to PatientSearchFilter didn't leak into it."""
+    from apps.doctors.models import DoctorProfile
+    from apps.encounters.models import Encounter, EncounterType
+
+    create = auth_client(receptionist_user).post(
+        "/api/patients/", {**_payload(), **_guardian_payload()}, format="json"
+    )
+    patient = Patient.objects.get(pk=create.data["id"])
+    doctor = DoctorProfile.objects.create(
+        user=admin_user, specialty="Pediatrics", license_number="LIC-GCS", contact_phone="1",
+    )
+    encounter_type = EncounterType.objects.get_or_create(name="Consulta General")[0]
+    Encounter.objects.create(
+        encounter_type=encounter_type, patient=patient, doctor=doctor, created_by=admin_user,
+    )
+
+    res = auth_client(admin_user).get("/api/encounters/?search=00112345678")
+    assert res.data["count"] == 0
+
+
+def test_masked_role_search_ignores_guardian_cedula_term(
+    auth_client, receptionist_user, it_user
+):
+    """Masked roles (IT/CENTER_MANAGER) get PatientSearchFilter's existing
+    "ignore the search term entirely" bypass (a PII-existence-oracle guard
+    that predates this change) -- confirms the new guardian-cedula matching
+    doesn't carve out an exception to it. A second, non-matching patient
+    proves the search term was actually ignored rather than coincidentally
+    matching everything in an otherwise-empty test DB."""
+    auth_client(receptionist_user).post(
+        "/api/patients/", {**_payload(), **_guardian_payload()}, format="json"
+    )
+    auth_client(receptionist_user).post(
+        "/api/patients/",
+        _payload(first_name="Other", birth_date="1990-01-01", cedula="01098765403"),
+        format="json",
+    )
+    res = auth_client(it_user).get("/api/patients/?search=00112345678")
+    assert res.data["count"] == 2

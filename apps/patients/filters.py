@@ -33,7 +33,9 @@ def patient_age(patient_or_birth_date) -> int | None:
 
 class PatientSearchFilter(SearchFilter):
     """Search patients by name (plaintext search_name index) and, when the
-    query contains digits, by the cedula/NSS last-4 index.
+    query contains digits, by the cedula/NSS last-4 index -- including the
+    guardian's cedula for a minor patient, so front-desk staff can find a
+    child by the only ID they may have on hand.
 
     Multiple terms are AND-ed. Masked roles (IT/CENTER_MANAGER) are exempt so a
     search cannot act as a PII existence oracle.
@@ -54,6 +56,6 @@ class PatientSearchFilter(SearchFilter):
         for term in terms:
             term_q = Q(search_name__icontains=term)
             if any(ch.isdigit() for ch in term):
-                term_q |= Q(id__in=patient_ids_matching_digits(term))
+                term_q |= Q(id__in=patient_ids_matching_digits(term, include_guardian=True))
             q &= term_q
         return queryset.filter(q).distinct()
