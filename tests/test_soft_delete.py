@@ -16,14 +16,18 @@ Covers the behavior added across this branch's commits:
 """
 
 from django.contrib.admin.sites import AdminSite
+import pytest
 from rest_framework.test import APIClient
 
 from apps.appointments.models import Appointment
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile, DoctorSchedule
+from apps.encounters.models import Encounter
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+from apps.rooms.models import Room, RoomType
+from apps.services.models import Service, ServiceType
 
 
 def _patient(**overrides):
@@ -371,3 +375,146 @@ def test_admin_bulk_delete_selected_action_removed(admin_user):
     ma = MedicineAdmin(Medicine, site)
     actions = ma.get_actions(_StubRequest(admin_user))
     assert "delete_selected" not in actions
+
+
+# ---------------------------------------------------------------------------
+# Restore RBAC matrix (audit finding): restore is admin-only for every
+# soft-deletable resource, enforced inside AuditMixin.restore -- not via the
+# action decorator, which every ViewSet's get_permissions() overwrites for
+# POST. Previously non-admin roles that could write a resource could also
+# restore it (receptionists restoring medicines, IT restoring centers/doctors,
+# doctors/nurses restoring records, doctors restoring schedules, doctors/
+# receptionists restoring appointments, center managers restoring services).
+# ---------------------------------------------------------------------------
+
+
+def _restore_url(name, object_id):
+    prefixes = {
+        "medicine": "/api/medicines/",
+        "center": "/api/centers/",
+        "service": "/api/services/",
+        "service_type": "/api/service-types/",
+        "doctor_profile": "/api/doctors/profiles/",
+        "doctor_schedule": "/api/doctors/schedules/",
+        "appointment": "/api/appointments/",
+        "medical_record": "/api/medical-records/",
+        "consultation_log": "/api/consultation-logs/",
+        "record_image": "/api/images/",
+        "room": "/api/rooms/",
+        "room_type": "/api/room-types/",
+        "encounter": "/api/encounters/",
+    }
+    return f"{prefixes[name]}{object_id}/restore/"
+
+
+def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
+    """Create one soft-deletable row per restorable resource and deactivate
+    it directly (this test is about the *restore* RBAC, so seeding bypasses
+    each resource's distinct delete permission), returning {name: url}."""
+    patient = _patient()
+    center = _center()
+    doctor = _doctor_profile(doctor_user)
+    med = Medicine.objects.create(generic_name="A", commercial_name="B")
+    st = ServiceType.objects.create(name="ST")
+    svc = Service.objects.create(
+        simon="123456", name="S", type=st, co_pago="100.00", privado="200.00"
+    )
+    schedule = DoctorSchedule.objects.create(
+        doctor=doctor, center=center, weekday=0, start_time="09:00", end_time="12:00"
+    )
+    appointment = _appointment(patient, doctor, receptionist_user)
+    record = _record(patient, receptionist_user, center)
+    log = ConsultationLog.objects.create(
+        patient=patient, doctor=doctor_user, center=center
+    )
+    image = RecordImage.objects.create(record=record, image="test.jpg", caption="x")
+    rt = RoomType.objects.create(name="RT")
+    room = Room.objects.create(code="R1", name="Room 1", room_type=rt, center=center)
+    encounter = Encounter.objects.create(
+        patient=patient, service_type=st, created_by=admin_user
+    )
+
+    targets = {
+        "medicine": med,
+        "center": center,
+        "service": svc,
+        "service_type": st,
+        "doctor_profile": doctor,
+        "doctor_schedule": schedule,
+        "appointment": appointment,
+        "medical_record": record,
+        "consultation_log": log,
+        "record_image": image,
+        "room": room,
+        "room_type": rt,
+        "encounter": encounter,
+    }
+    urls = {}
+    for name, obj in targets.items():
+        obj.active = False
+        obj.save(update_fields=["active"])
+        obj.refresh_from_db()
+        assert obj.active is False, name
+        urls[name] = _restore_url(name, obj.id)
+    return urls
+
+
+@pytest.mark.parametrize(
+    "non_admin",
+    ["doctor", "receptionist", "it", "center_manager"],
+)
+def test_restore_forbidden_for_all_non_admin_roles_on_every_resource(
+    auth_client, admin_user, doctor_user, receptionist_user, it_user,
+    center_manager_user, non_admin,
+):
+    users = {
+        "doctor": doctor_user,
+        "receptionist": receptionist_user,
+        "it": it_user,
+        "center_manager": center_manager_user,
+    }
+    urls = _seed_restore_targets(admin_user, doctor_user, receptionist_user)
+    for name, url in urls.items():
+        res = auth_client(users[non_admin]).post(url)
+        assert res.status_code == 403, (non_admin, name, res.data)
+
+
+def test_restore_allowed_for_admin_on_every_resource(
+    auth_client, admin_user, doctor_user, receptionist_user
+):
+    urls = _seed_restore_targets(admin_user, doctor_user, receptionist_user)
+    for name, url in urls.items():
+        res = auth_client(admin_user).post(url)
+        assert res.status_code == 200, (name, res.data)
+        # restore doesn't cascade -- child rows stay inactive
+        obj = None
+        if name == "medicine":
+            obj = Medicine
+        elif name == "center":
+            obj = MedicalCenter
+        elif name == "service":
+            obj = Service
+        elif name == "service_type":
+            obj = ServiceType
+        elif name == "doctor_profile":
+            obj = DoctorProfile
+        elif name == "doctor_schedule":
+            obj = DoctorSchedule
+        elif name == "appointment":
+            obj = Appointment
+        elif name == "medical_record":
+            obj = MedicalRecord
+        elif name == "consultation_log":
+            obj = ConsultationLog
+        elif name == "record_image":
+            obj = RecordImage
+        elif name == "room":
+            obj = Room
+        elif name == "room_type":
+            obj = RoomType
+        elif name == "encounter":
+            obj = Encounter
+        restored = obj.all_objects.get(pk=url.split("/")[-3])
+        assert restored.active is True, name
+
+

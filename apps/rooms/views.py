@@ -22,7 +22,7 @@ class RoomTypeViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.request.method == "DELETE":
             self.permission_classes = [IsAdminOrIT]
-        elif self.action != "restore" and self.request.method not in SAFE_METHODS:
+        elif self.request.method not in SAFE_METHODS:
             self.permission_classes = [CanManageRooms]
         return super().get_permissions()
 
@@ -40,6 +40,6 @@ class RoomViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.request.method == "DELETE":
             self.permission_classes = [IsAdminOrIT]
-        elif self.action != "restore" and self.request.method not in SAFE_METHODS:
+        elif self.request.method not in SAFE_METHODS:
             self.permission_classes = [CanManageRooms]
         return super().get_permissions()

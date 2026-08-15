@@ -5,7 +5,12 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdminOrIT, IsDoctor, IsStaffUser
+from apps.core.permissions import (
+    CanViewInactive,
+    IsAdminOrIT,
+    IsDoctor,
+    IsStaffUser,
+)
 from apps.doctors.models import DoctorProfile, DoctorSchedule
 from apps.doctors.serializers import DoctorProfileSerializer, DoctorScheduleSerializer
 
@@ -89,7 +94,12 @@ class DoctorScheduleViewSet(AuditMixin, viewsets.ModelViewSet):
     filterset_fields = ["doctor", "center", "weekday"]
 
     def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
+        if self.action == "restore":
+            # restore is admin-only everywhere (invariant #7); the schedule
+            # write permission is IsDoctor, which would otherwise block even
+            # the admin from reaching the restore action.
+            self.permission_classes = [CanViewInactive]
+        elif self.request.method not in SAFE_METHODS:
             self.permission_classes = [IsDoctor]
         return super().get_permissions()
 

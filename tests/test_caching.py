@@ -25,6 +25,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
+from apps.rooms.models import RoomType
 
 
 def _query_count(client, url):
@@ -95,6 +96,31 @@ def test_medicine_delete_invalidates_cache(auth_client, admin_user, db):
     client.delete(f"/api/medicines/{med.id}/")
 
     assert client.get("/api/medicines/").data["count"] == 0
+
+
+def test_room_type_list_cached_and_invalidated(auth_client, admin_user, db):
+    """RoomType list is cached like the other reference lists; create /
+    rename / delete must invalidate it immediately, not after the TTL
+    (regression: RoomType was cached but never wired to an invalidation
+    signal, so changes were invisible for up to 300s)."""
+    client = auth_client(admin_user)
+    res1, n1 = _query_count(client, "/api/room-types/")
+    assert res1.status_code == 200
+    assert n1 > 0
+    res2, n2 = _query_count(client, "/api/room-types/")
+    assert n2 == 0
+    assert res2.data["count"] == res1.data["count"]
+    assert res2.data["results"] == res1.data["results"]
+
+    rt = RoomType.objects.create(name="Consulta externa")
+    assert client.get("/api/room-types/").data["count"] == res1.data["count"] + 1
+
+    client.patch(f"/api/room-types/{rt.id}/", {"name": "Emergencia"}, format="json")
+    renamed = client.get("/api/room-types/").data["results"]
+    assert any(r["name"] == "Emergencia" for r in renamed)
+
+    client.delete(f"/api/room-types/{rt.id}/")
+    assert client.get("/api/room-types/").data["count"] == res1.data["count"]
 
 
 def test_ars_list_cached_and_invalidated(auth_client, admin_user, db):
