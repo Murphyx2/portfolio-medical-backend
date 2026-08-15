@@ -5,19 +5,6 @@ from django.utils import timezone
 from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
-class EncounterType(TimestampedModel, SoftDeleteModel):
-    name = models.CharField(max_length=255, unique=True)
-    # Some encounter types (e.g. a routine vitals-only visit) don't require a
-    # primary diagnosis before admission -- see Encounter.ready_for_active().
-    requires_diagnosis = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self) -> str:
-        return self.name
-
-
 class Encounter(TimestampedModel, SoftDeleteModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -35,14 +22,25 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     # applies once a number is actually assigned (multiple NULLs don't
     # collide under a unique index).
     encounter_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
-    encounter_type = models.ForeignKey(
-        EncounterType, on_delete=models.PROTECT, related_name="encounters"
+    # Same catalog Services are categorized under (apps/services.ServiceType)
+    # -- selecting one narrows the Services section to that type's services,
+    # and its requires_doctor/requires_diagnosis flags drive the doctor and
+    # admit-time diagnosis requirements below.
+    service_type = models.ForeignKey(
+        "services.ServiceType", on_delete=models.PROTECT, related_name="encounters"
     )
     patient = models.ForeignKey(
         "patients.Patient", on_delete=models.PROTECT, related_name="encounters"
     )
+    # Nullable: only required when service_type.requires_doctor is true (see
+    # EncounterSerializer.validate()) -- not every service needs a doctor
+    # present (e.g. a lab-only visit).
     doctor = models.ForeignKey(
-        "doctors.DoctorProfile", on_delete=models.PROTECT, related_name="encounters"
+        "doctors.DoctorProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="encounters",
     )
     # Free text for now -- full referral routing/cross-center workflow is
     # deferred; this just records who referred the patient, if anyone.
@@ -110,7 +108,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         errors = []
         if self.room_id is None:
             errors.append("A room is required to admit this encounter.")
-        if self.encounter_type_id and self.encounter_type.requires_diagnosis:
+        if self.service_type_id and self.service_type.requires_diagnosis:
             if not self.diagnoses.filter(is_primary=True).exists():
                 errors.append("A primary diagnosis is required to admit this encounter.")
         return errors

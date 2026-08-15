@@ -193,3 +193,37 @@ def test_deactivating_service_type_does_not_break_existing_services(
 def test_seed_migration_created_default_service_types(db):
     names = set(ServiceType.objects.values_list("name", flat=True))
     assert {"Admission", "Vaccination", "Emergency"}.issubset(names)
+
+
+# ---------------------------------------------------------------------------
+# requires_doctor/requires_diagnosis: drive the Admission form's conditional
+# doctor requirement and admit-time diagnosis requirement (merged in from
+# the former apps.encounters.EncounterType).
+# ---------------------------------------------------------------------------
+
+
+def test_service_type_requires_doctor_and_diagnosis_defaults(auth_client, admin_user):
+    res = auth_client(admin_user).post(
+        "/api/service-types/", {"name": "Chequeo"}, format="json"
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["requires_doctor"] is False
+    assert res.data["requires_diagnosis"] is True
+
+
+def test_service_type_requires_doctor_and_diagnosis_round_trip(auth_client, admin_user):
+    res = auth_client(admin_user).post(
+        "/api/service-types/",
+        {"name": "Laboratorio", "requires_doctor": False, "requires_diagnosis": False},
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["requires_doctor"] is False
+    assert res.data["requires_diagnosis"] is False
+
+    st_id = res.data["id"]
+    res = auth_client(admin_user).patch(
+        f"/api/service-types/{st_id}/", {"requires_doctor": True}, format="json"
+    )
+    assert res.status_code == 200, res.data
+    assert res.data["requires_doctor"] is True

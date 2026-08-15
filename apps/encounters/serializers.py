@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.core.services import can_view_inactive, is_masked_role
 from apps.doctors.models import DoctorProfile
-from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService, EncounterType
+from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 from apps.patients.filters import patient_age
 from apps.patients.models import Patient
 from apps.patients.serializers import _mask
@@ -18,18 +18,6 @@ CLINICAL_FIELDS = ["chief_complaint"]
 def _request_user(context):
     request = context.get("request")
     return getattr(request, "user", None) if request else None
-
-
-class EncounterTypeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EncounterType
-        fields = ["id", "name", "requires_diagnosis", "active"]
-
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
 
 
 class PatientSummarySerializer(serializers.ModelSerializer):
@@ -100,7 +88,7 @@ class EncounterSerializer(serializers.ModelSerializer):
     doctor_info = DoctorLiteSerializer(source="doctor", read_only=True)
     room_name = serializers.CharField(source="room.name", read_only=True, default=None)
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
-    encounter_type_name = serializers.CharField(source="encounter_type.name", read_only=True)
+    service_type_name = serializers.CharField(source="service_type.name", read_only=True)
     ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
     ars_program_name = serializers.CharField(
         source="ars_program.name", read_only=True, default=None
@@ -114,8 +102,8 @@ class EncounterSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "encounter_number",
-            "encounter_type",
-            "encounter_type_name",
+            "service_type",
+            "service_type_name",
             "patient",
             "patient_info",
             "doctor",
@@ -166,6 +154,8 @@ class EncounterSerializer(serializers.ModelSerializer):
         return obj.created_by.get_full_name() or obj.created_by.username
 
     def validate_doctor(self, value):
+        if value is None:
+            return value
         user = _request_user(self.context)
         if user and user.is_authenticated and getattr(user, "is_doctor", False):
             if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
@@ -182,6 +172,26 @@ class EncounterSerializer(serializers.ModelSerializer):
         if ars is not None and program is not None and program.ars_id != ars.id:
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
+            )
+
+        service_type = attrs.get(
+            "service_type", self.instance.service_type if self.instance else None
+        )
+        doctor = attrs.get("doctor", self.instance.doctor if self.instance else None)
+        if service_type is not None and service_type.requires_doctor and doctor is None:
+            raise serializers.ValidationError(
+                {"doctor": "A doctor is required for this service type."}
+            )
+
+        services = attrs.get("services")
+        if services is not None:
+            if not any(item.get("service") for item in services):
+                raise serializers.ValidationError(
+                    {"services": "At least one service is required."}
+                )
+        elif self.instance is None:
+            raise serializers.ValidationError(
+                {"services": "At least one service is required."}
             )
         return attrs
 

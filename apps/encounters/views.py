@@ -3,39 +3,21 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
-from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
 from apps.core.services import client_ip, log_audit
 from apps.encounters.filters import EncounterSearchFilter
-from apps.encounters.models import Encounter, EncounterType, generate_encounter_number
-from apps.encounters.serializers import EncounterSerializer, EncounterTypeSerializer
-
-
-class EncounterTypeViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
-    cache_model = "encountertype"
-    queryset = EncounterType.all_objects.all()
-    serializer_class = EncounterTypeSerializer
-    permission_classes = [IsStaffUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ["name"]
-    ordering_fields = ["name"]
-
-    def get_permissions(self):
-        if self.request.method == "DELETE":
-            self.permission_classes = [IsAdminOrIT]
-        elif self.action != "restore" and self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrIT]
-        return super().get_permissions()
+from apps.encounters.models import Encounter, generate_encounter_number
+from apps.encounters.serializers import EncounterSerializer
 
 
 class EncounterViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Encounter.all_objects.select_related(
-        "patient", "doctor__user", "room", "center", "encounter_type", "ars", "ars_program",
+        "patient", "doctor__user", "room", "center", "service_type", "ars", "ars_program",
         "created_by",
     ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
     serializer_class = EncounterSerializer
@@ -46,7 +28,7 @@ class EncounterViewSet(AuditMixin, viewsets.ModelViewSet):
         "doctor": ["exact"],
         "center": ["exact"],
         "status": ["exact"],
-        "encounter_type": ["exact"],
+        "service_type": ["exact"],
         "created_at": ["gte", "lt"],
     }
     ordering_fields = [

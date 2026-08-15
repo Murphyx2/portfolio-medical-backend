@@ -3,13 +3,17 @@ nurse/center_manager, IT read-only), doctor object-level scoping (own
 encounters only), DRAFT->ACTIVE->COMPLETED/CANCELLED status lifecycle via the
 admit/cancel/complete actions, encounter_number assignment on admit,
 same-day-active-encounter conflict detection with override, primary-diagnosis
-requirement (unless the EncounterType is exempted), and clinical-text/PII
-masking.
+requirement (unless the ServiceType is exempted), the at-least-one-service
+requirement, the ServiceType.requires_doctor conditional doctor requirement,
+and clinical-text/PII masking.
+
+Encounter.service_type is the same `apps.services.ServiceType` catalog the
+Services page manages (merged from the former, now-deleted EncounterType).
 """
 
 from apps.centers.models import MedicalCenter
 from apps.doctors.models import DoctorProfile
-from apps.encounters.models import Encounter, EncounterType
+from apps.encounters.models import Encounter
 from apps.patients.models import Patient
 from apps.rooms.models import Room, RoomType
 from apps.services.models import Service, ServiceType
@@ -26,17 +30,21 @@ def _room(center=None, code="R1"):
     )
 
 
-def _encounter_type(name="Consulta General", requires_diagnosis=True):
+def _service_type(name="Consulta General", requires_doctor=False, requires_diagnosis=True):
     # get_or_create()'s `defaults` only applies on insert -- explicitly sync
-    # requires_diagnosis on every call so a test overriding it for an
-    # already-seeded name (e.g. "Consulta General" from the 0002 seed
-    # migration) actually takes effect instead of silently keeping the
-    # seeded value.
-    encounter_type, _ = EncounterType.objects.get_or_create(name=name)
-    if encounter_type.requires_diagnosis != requires_diagnosis:
-        encounter_type.requires_diagnosis = requires_diagnosis
-        encounter_type.save()
-    return encounter_type
+    # both flags on every call so a test overriding one for an already-seeded
+    # name actually takes effect instead of silently keeping the prior value.
+    service_type, _ = ServiceType.objects.get_or_create(name=name)
+    changed = False
+    if service_type.requires_doctor != requires_doctor:
+        service_type.requires_doctor = requires_doctor
+        changed = True
+    if service_type.requires_diagnosis != requires_diagnosis:
+        service_type.requires_diagnosis = requires_diagnosis
+        changed = True
+    if changed:
+        service_type.save()
+    return service_type
 
 
 def _patient(**overrides):
@@ -61,19 +69,32 @@ def _doctor(user, **overrides):
     return DoctorProfile.objects.create(user=user, **data)
 
 
-def _service():
-    service_type = ServiceType.objects.create(name="Consult")
-    return Service.objects.create(
-        simon="123456", name="Consulta", type=service_type, co_pago="0", privado="0"
-    )
+def _service(service_type=None, **overrides):
+    data = {
+        "simon": "123456",
+        "name": "Consulta",
+        "type": service_type or _service_type(),
+        "co_pago": "0",
+        "privado": "0",
+    }
+    data.update(overrides)
+    return Service.objects.create(**data)
 
 
 def _payload(patient, doctor, **overrides):
+    service_type_id = overrides.pop("service_type_id", None)
+    service_type = (
+        ServiceType.objects.get(pk=service_type_id) if service_type_id else _service_type()
+    )
+    services = overrides.pop("services", None)
+    if services is None:
+        services = [{"service": _service(service_type=service_type).id, "quantity": 1}]
     data = {
-        "encounter_type": overrides.pop("encounter_type_id", None) or _encounter_type().id,
+        "service_type": service_type.id,
         "patient": patient.id,
-        "doctor": doctor.id,
+        "doctor": doctor.id if doctor else None,
         "chief_complaint": "Fever",
+        "services": services,
     }
     data.update(overrides)
     return data
@@ -92,7 +113,7 @@ def test_every_role_can_read_encounters(
     doctor = _doctor(doctor_user)
     patient = _patient()
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
     for user in (
         admin_user, doctor_user, receptionist_user, it_user, nurse_user, center_manager_user,
@@ -153,11 +174,11 @@ def test_doctor_only_sees_own_encounters(auth_client, doctor_user, make_user, ad
     other_user = make_user("doctor2", User.Role.DOCTOR)
     other_doctor = _doctor(other_user)
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=_patient(cedula="00100000011"),
+        service_type=_service_type(), patient=_patient(cedula="00100000011"),
         doctor=own_doctor, created_by=admin_user,
     )
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=_patient(cedula="00100000022"),
+        service_type=_service_type(), patient=_patient(cedula="00100000022"),
         doctor=other_doctor, created_by=admin_user,
     )
     res = auth_client(doctor_user).get("/api/encounters/")
@@ -166,7 +187,7 @@ def test_doctor_only_sees_own_encounters(auth_client, doctor_user, make_user, ad
 
 # ---------------------------------------------------------------------------
 # Admit lifecycle: room required, primary diagnosis required unless the
-# encounter type is exempted, encounter_number assigned on admit.
+# service type is exempted, encounter_number assigned on admit.
 # ---------------------------------------------------------------------------
 
 
@@ -174,7 +195,7 @@ def test_admit_requires_room(auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
     assert res.status_code == 400, res.data
@@ -190,7 +211,7 @@ def test_admit_requires_primary_diagnosis_unless_exempted(
     # Non-exempted type: blocked without a primary diagnosis.
     patient1 = _patient(cedula="00100000031")
     encounter1 = Encounter.objects.create(
-        encounter_type=_encounter_type(requires_diagnosis=True),
+        service_type=_service_type(requires_diagnosis=True),
         patient=patient1, doctor=doctor, room=room, created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter1.id}/admit/")
@@ -205,7 +226,7 @@ def test_admit_requires_primary_diagnosis_unless_exempted(
     # Exempted type: admits with no diagnosis at all.
     patient2 = _patient(cedula="00100000032")
     encounter2 = Encounter.objects.create(
-        encounter_type=_encounter_type(name="Vacunación", requires_diagnosis=False),
+        service_type=_service_type(name="Vacunación", requires_diagnosis=False),
         patient=patient2, doctor=doctor, room=room, created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter2.id}/admit/")
@@ -216,16 +237,16 @@ def test_same_day_active_conflict_requires_override(auth_client, admin_user, doc
     doctor = _doctor(doctor_user)
     room = _room()
     patient = _patient()
-    encounter_type = _encounter_type(name="Chequeo rápido", requires_diagnosis=False)
+    service_type = _service_type(name="Chequeo rápido", requires_diagnosis=False)
 
     first = Encounter.objects.create(
-        encounter_type=encounter_type, patient=patient, doctor=doctor, room=room,
+        service_type=service_type, patient=patient, doctor=doctor, room=room,
         created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{first.id}/admit/")
 
     second = Encounter.objects.create(
-        encounter_type=encounter_type, patient=patient, doctor=doctor, room=room,
+        service_type=service_type, patient=patient, doctor=doctor, room=room,
         created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{second.id}/admit/")
@@ -242,7 +263,7 @@ def test_cancel_and_complete_lifecycle(auth_client, admin_user, doctor_user):
     room = _room()
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(requires_diagnosis=False), patient=patient,
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
@@ -260,7 +281,7 @@ def test_cancel_draft_encounter(auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
     res = auth_client(admin_user).post(
         f"/api/encounters/{encounter.id}/cancel/", {"reason": "No show"}, format="json"
@@ -275,7 +296,7 @@ def test_cannot_edit_completed_encounter(auth_client, admin_user, doctor_user):
     room = _room()
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(requires_diagnosis=False), patient=patient,
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
@@ -298,6 +319,7 @@ def test_create_with_nested_diagnoses_and_services(auth_client, admin_user, doct
     service = _service()
     payload = _payload(
         patient, doctor,
+        service_type_id=service.type_id,
         diagnoses=[{"description": "Migraine", "is_primary": True}],
         services=[{"service": service.id, "quantity": 2}],
     )
@@ -314,7 +336,7 @@ def test_update_replaces_nested_diagnoses(auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
     encounter.diagnoses.create(description="Old", is_primary=True)
     res = auth_client(admin_user).patch(
@@ -328,6 +350,52 @@ def test_update_replaces_nested_diagnoses(auth_client, admin_user, doctor_user):
 
 
 # ---------------------------------------------------------------------------
+# At least one service is required to save an encounter at all (even a
+# Draft), and the doctor field is required only when the selected
+# ServiceType.requires_doctor is true.
+# ---------------------------------------------------------------------------
+
+
+def test_create_without_services_rejected(auth_client, admin_user, doctor_user):
+    doctor = _doctor(doctor_user)
+    patient = _patient()
+    payload = _payload(patient, doctor, services=[])
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 400, res.data
+    assert "services" in res.data
+
+
+def test_doctor_required_when_service_type_requires_it(auth_client, admin_user):
+    patient = _patient()
+    service_type = _service_type(name="Emergencia", requires_doctor=True)
+    service = _service(service_type=service_type)
+    payload = {
+        "service_type": service_type.id,
+        "patient": patient.id,
+        "chief_complaint": "Fever",
+        "services": [{"service": service.id, "quantity": 1}],
+    }
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 400, res.data
+    assert "doctor" in res.data
+
+
+def test_doctor_not_required_when_service_type_does_not_require_it(auth_client, admin_user):
+    patient = _patient()
+    service_type = _service_type(name="Laboratorio", requires_doctor=False)
+    service = _service(service_type=service_type)
+    payload = {
+        "service_type": service_type.id,
+        "patient": patient.id,
+        "chief_complaint": "Routine labs",
+        "services": [{"service": service.id, "quantity": 1}],
+    }
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 201, res.data
+    assert res.data["doctor"] is None
+
+
+# ---------------------------------------------------------------------------
 # Masking: chief_complaint/diagnosis text masked for non-clinical roles;
 # patient summary PII masked for IT/center_manager.
 # ---------------------------------------------------------------------------
@@ -337,7 +405,7 @@ def test_chief_complaint_masked_for_receptionist(auth_client, admin_user, doctor
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor,
+        service_type=_service_type(), patient=patient, doctor=doctor,
         chief_complaint="Chest pain", created_by=admin_user,
     )
     res = auth_client(receptionist_user).get(f"/api/encounters/{encounter.id}/")
@@ -353,7 +421,7 @@ def test_patient_summary_masked_for_it_and_center_manager(
     doctor = _doctor(doctor_user)
     patient = _patient(allergies="Penicillin")
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
     for user in (it_user, center_manager_user):
         res = auth_client(user).get(f"/api/encounters/{encounter.id}/")
@@ -385,11 +453,11 @@ def test_encounter_number_is_date_and_daily_sequence(auth_client, admin_user, do
 
     doctor = _doctor(doctor_user)
     room = _room()
-    encounter_type = _encounter_type(requires_diagnosis=False)
+    service_type = _service_type(requires_diagnosis=False)
     today = timezone.localdate()
 
     first = Encounter.objects.create(
-        encounter_type=encounter_type, patient=_patient(cedula="00100000041"),
+        service_type=service_type, patient=_patient(cedula="00100000041"),
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{first.id}/admit/")
@@ -397,7 +465,7 @@ def test_encounter_number_is_date_and_daily_sequence(auth_client, admin_user, do
     assert first.encounter_number == f"{today:%Y%m%d}-001"
 
     second = Encounter.objects.create(
-        encounter_type=encounter_type, patient=_patient(cedula="00100000042"),
+        service_type=service_type, patient=_patient(cedula="00100000042"),
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{second.id}/admit/")
@@ -417,10 +485,10 @@ def test_search_by_patient_cedula_digits(auth_client, admin_user, doctor_user):
     target = _patient(cedula="00112345678")
     other = _patient(cedula="00199999999")
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=target, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=target, doctor=doctor, created_by=admin_user
     )
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=other, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=other, doctor=doctor, created_by=admin_user
     )
 
     res = auth_client(admin_user).get("/api/encounters/?search=00112345678")
@@ -432,7 +500,7 @@ def test_search_by_doctor_code_and_encounter_number(auth_client, admin_user, doc
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        encounter_type=_encounter_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(requires_diagnosis=False), patient=patient,
         doctor=doctor, room=_room(), created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
@@ -449,7 +517,7 @@ def test_masked_role_gets_no_cedula_digit_search(auth_client, it_user, doctor_us
     doctor = _doctor(doctor_user)
     patient = _patient(cedula="00112345678")
     Encounter.objects.create(
-        encounter_type=_encounter_type(), patient=patient, doctor=doctor, created_by=admin_user
+        service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
 
     res = auth_client(it_user).get("/api/encounters/?search=00112345678")

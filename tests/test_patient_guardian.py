@@ -287,7 +287,8 @@ def test_encounters_search_does_not_match_guardian_cedula(
     deliberately scoped to the patient's own cedula only -- confirms adding
     guardian-cedula search to PatientSearchFilter didn't leak into it."""
     from apps.doctors.models import DoctorProfile
-    from apps.encounters.models import Encounter, EncounterType
+    from apps.encounters.models import Encounter
+    from apps.services.models import ServiceType
 
     create = auth_client(receptionist_user).post(
         "/api/patients/", {**_payload(), **_guardian_payload()}, format="json"
@@ -296,9 +297,9 @@ def test_encounters_search_does_not_match_guardian_cedula(
     doctor = DoctorProfile.objects.create(
         user=admin_user, specialty="Pediatrics", license_number="LIC-GCS", contact_phone="1",
     )
-    encounter_type = EncounterType.objects.get_or_create(name="Consulta General")[0]
+    service_type = ServiceType.objects.get_or_create(name="Consulta General")[0]
     Encounter.objects.create(
-        encounter_type=encounter_type, patient=patient, doctor=doctor, created_by=admin_user,
+        service_type=service_type, patient=patient, doctor=doctor, created_by=admin_user,
     )
 
     res = auth_client(admin_user).get("/api/encounters/?search=00112345678")

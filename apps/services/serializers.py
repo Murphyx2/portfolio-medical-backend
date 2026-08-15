@@ -7,7 +7,7 @@ from apps.services.models import Service, ServiceType
 class ServiceTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServiceType
-        fields = ["id", "name", "active"]
+        fields = ["id", "name", "requires_doctor", "requires_diagnosis", "active"]
 
     def get_fields(self):
         fields = super().get_fields()

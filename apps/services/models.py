@@ -6,6 +6,11 @@ from apps.core.models import SoftDeleteModel, TimestampedModel
 
 class ServiceType(TimestampedModel, SoftDeleteModel):
     name = models.CharField(max_length=255, unique=True)
+    # Drive the Admission form: not every service needs a doctor present
+    # (e.g. a lab-only visit) or a primary diagnosis to admit (e.g. a
+    # routine vaccination) -- see apps/encounters/models.py::Encounter.
+    requires_doctor = models.BooleanField(default=False)
+    requires_diagnosis = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name"]

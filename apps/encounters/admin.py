@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.core.admin import AuditModelAdmin
-from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService, EncounterType
+from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 
 
 class EncounterDiagnosisInline(admin.TabularInline):
@@ -12,13 +12,6 @@ class EncounterDiagnosisInline(admin.TabularInline):
 class EncounterServiceInline(admin.TabularInline):
     model = EncounterService
     extra = 0
-
-
-@admin.register(EncounterType)
-class EncounterTypeAdmin(AuditModelAdmin):
-    list_display = ("name", "requires_diagnosis", "active")
-    list_filter = ("active", "requires_diagnosis")
-    search_fields = ("name",)
 
 
 @admin.register(Encounter)
@@ -32,6 +25,6 @@ class EncounterAdmin(AuditModelAdmin):
         "center",
         "active",
     )
-    list_filter = ("status", "priority", "active", "encounter_type", "center")
+    list_filter = ("status", "priority", "active", "service_type", "center")
     search_fields = ("encounter_number", "patient__search_name")
     inlines = [EncounterDiagnosisInline, EncounterServiceInline]
