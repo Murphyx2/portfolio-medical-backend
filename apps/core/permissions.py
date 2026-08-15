@@ -206,6 +206,42 @@ def is_staff_role(user) -> bool:
     )
 
 
+class CanManageEncounters(BasePermission):
+    """Admin/doctor/receptionist/nurse/center_manager may create/update
+    encounters (IT stays read-only, matching its read-only PII posture
+    elsewhere). Object-level: doctors are restricted to their own
+    encounters, and no one may edit an encounter once it's COMPLETED/
+    CANCELLED or has a COMPLETED service line (billed/administered work
+    shouldn't be rewritten after the fact).
+    """
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(
+            request.user.is_admin
+            or request.user.is_doctor
+            or request.user.is_receptionist
+            or request.user.is_nurse
+            or request.user.is_center_manager
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
+            return False
+        if not getattr(user, "is_admin", False):
+            if obj.status in ("COMPLETED", "CANCELLED"):
+                return False
+            if obj.services.filter(status="COMPLETED").exists():
+                return False
+        return True
+
+
 class PatientDataPermission(BasePermission):
     """
     Patient data is sensitive: writes require Admin/Doctor/Receptionist; reads

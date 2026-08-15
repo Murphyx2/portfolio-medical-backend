@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "apps.appointments",
     "apps.services",
     "apps.rooms",
+    "apps.encounters",
 ]
 
 MIDDLEWARE = [
@@ -201,7 +202,12 @@ CORS_ALLOW_CREDENTIALS = env_bool("DJANGO_CORS_ALLOW_CREDENTIALS", "true")
 # i18n / static / media
 # ------------------------------------------------------------------
 LANGUAGE_CODE = "es"
-TIME_ZONE = env("TZ", "UTC")
+# Defaults to the clinic's own timezone (Dominican Republic, no DST) rather
+# than UTC -- anything that reads "today"/"the current date" server-side
+# (e.g. Encounter.generate_encounter_number's YYYYMMDD prefix) must agree
+# with the front-desk staff's actual calendar day, not a UTC day that can
+# already be tomorrow for hours before it is locally.
+TIME_ZONE = env("TZ", "America/Santo_Domingo")
 USE_I18N = True
 USE_TZ = True
 

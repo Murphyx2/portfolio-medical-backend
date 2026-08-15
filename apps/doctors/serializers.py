@@ -21,6 +21,9 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         queryset=get_user_model().objects.all(),
         write_only=True,
     )
+    default_room_name = serializers.CharField(
+        source="default_room.name", read_only=True, default=None
+    )
 
     class Meta:
         model = DoctorProfile
@@ -30,13 +33,17 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
             "user_id",
             "username",
             "full_name",
+            "code",
             "specialty",
             "license_number",
             "contact_phone",
             "contact_email",
             "bio",
+            "default_room",
+            "default_room_name",
             "active",
         ]
+        read_only_fields = ["code"]
 
     def get_fields(self):
         fields = super().get_fields()

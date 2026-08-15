@@ -17,6 +17,7 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["specialty", "user"]
     search_fields = [
+        "code",
         "user__first_name",
         "user__last_name",
         "license_number",
@@ -25,6 +26,7 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
         "contact_phone",
     ]
     ordering_fields = [
+        "code",
         "user__last_name",
         "user__first_name",
         "specialty",

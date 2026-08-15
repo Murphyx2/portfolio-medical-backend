@@ -74,6 +74,8 @@ class PatientSerializer(serializers.ModelSerializer):
             "guardian_cedula",
             "guardian_nss",
             "guardian_phone",
+            "allergies",
+            "critical_conditions",
             "active",
             "created_at",
             "updated_at",
@@ -275,6 +277,8 @@ class PatientSerializer(serializers.ModelSerializer):
                 "guardian_cedula",
                 "guardian_nss",
                 "guardian_phone",
+                "allergies",
+                "critical_conditions",
             ):
                 data[field] = _mask(data[field])
             data["first_name"] = _mask(data["first_name"])

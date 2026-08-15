@@ -73,16 +73,27 @@ class Patient(TimestampedModel, SoftDeleteModel):
     )
 
     # Guardian/parent info, collected for minors (see PatientSerializer.validate
-    # for the conditional-required rule). No last4/hash/search columns here --
-    # unlike the patient's own cedula/nss, a guardian's identifiers are
-    # intentionally NOT unique (siblings can share the same guardian) and are
-    # never searched on.
+    # for the conditional-required rule).
     has_guardian = models.BooleanField(default=True)
     guardian_first_name = EncryptedCharField(blank=True, default="")
     guardian_last_name = EncryptedCharField(blank=True, default="")
     guardian_cedula = EncryptedCharField(blank=True, default="")
     guardian_nss = EncryptedCharField(blank=True, default="")
     guardian_phone = EncryptedCharField(blank=True, default="")
+
+    # Same last4/blind-hash search index as cedula_last4/cedula_hash, so
+    # front-desk staff can find a minor by the only ID they may have on
+    # hand: the guardian's. Deliberately NOT unique -- unlike the patient's
+    # own cedula, siblings can share a guardian, and matching several
+    # patients on the same guardian cedula is the intended behavior.
+    guardian_cedula_last4 = models.CharField(max_length=4, blank=True, db_index=True)
+    guardian_cedula_hash = models.CharField(max_length=64, blank=True, db_index=True)
+
+    # Persistent clinical safety flags (not per-visit) so the encounter
+    # summary card can show them with an O(1) lookup instead of scanning
+    # medical record history.
+    allergies = EncryptedTextField(blank=True, default="")
+    critical_conditions = EncryptedTextField(blank=True, default="")
 
     class Meta:
         ordering = ["search_name"]
@@ -114,6 +125,8 @@ class Patient(TimestampedModel, SoftDeleteModel):
         self.nss_last4 = (self.nss or "")[-4:]
         self.cedula_hash = blind_index_digits(self.cedula)
         self.nss_hash = blind_index_digits(self.nss)
+        self.guardian_cedula_last4 = (self.guardian_cedula or "")[-4:]
+        self.guardian_cedula_hash = blind_index_digits(self.guardian_cedula)
         super().save(*args, **kwargs)
 
     @property

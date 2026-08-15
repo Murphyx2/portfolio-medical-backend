@@ -224,3 +224,39 @@ def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
     assert res.data["count"] == 1
     ids = [r["id"] for r in res.data["results"]]
     assert ids.count(patient.id) == 1
+
+
+def test_allergies_and_critical_conditions_encrypted_at_rest(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(allergies="Penicillin", critical_conditions="Diabetes"),
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["allergies"] == "Penicillin"
+    assert res.data["critical_conditions"] == "Diabetes"
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT allergies, critical_conditions FROM patients_patient LIMIT 1")
+        raw_allergies, raw_conditions = cursor.fetchone()
+    assert is_encrypted(raw_allergies)
+    assert is_encrypted(raw_conditions)
+
+
+def test_allergies_masked_for_it_role(auth_client, receptionist_user, it_user):
+    create = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(allergies="Penicillin"), format="json"
+    )
+    res = auth_client(it_user).get(f"/api/patients/{create.data['id']}/")
+    assert res.data["allergies"] != "Penicillin"
+
+
+def test_creating_patient_auto_creates_placeholder_record(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(allergies="Penicillin"), format="json"
+    )
+    assert res.status_code == 201, res.data
+    record = MedicalRecord.objects.get(patient_id=res.data["id"])
+    assert record.created_by == receptionist_user
+    assert record.title == "Registro inicial"
+    assert "Penicillin" in record.notes
+    assert record.diagnosis == ""

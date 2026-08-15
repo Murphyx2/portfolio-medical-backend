@@ -11,6 +11,30 @@ from apps.patients.models import Patient
 from apps.patients.serializers import PatientSerializer
 
 
+def _create_initial_record(patient: Patient, user) -> None:
+    """Every new patient gets a placeholder medical record right away, so
+    Records.tsx always has something to open for them (see the ?patient=
+    auto-open flow from Encounters.tsx) instead of an empty history. Left
+    for a doctor/nurse to fill in during the patient's first real visit --
+    no clinical fields are guessed here, only the safety-relevant summary
+    already captured on the patient form.
+    """
+    from apps.records.models import MedicalRecord
+
+    notes_parts = []
+    if patient.allergies:
+        notes_parts.append(f"Alergias: {patient.allergies}")
+    if patient.critical_conditions:
+        notes_parts.append(f"Condiciones críticas: {patient.critical_conditions}")
+    MedicalRecord.objects.create(
+        patient=patient,
+        created_by=user,
+        center=patient.center,
+        title="Registro inicial",
+        notes="\n".join(notes_parts),
+    )
+
+
 class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Patient.all_objects.select_related("ars", "ars_program", "center").all()
     serializer_class = PatientSerializer
@@ -29,6 +53,10 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
         if self.request.method == "DELETE":
             self.permission_classes = [CanDeletePatient]
         return super().get_permissions()
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        _create_initial_record(serializer.instance, self.request.user)
 
     def get_queryset(self):
         qs = super().get_queryset()
