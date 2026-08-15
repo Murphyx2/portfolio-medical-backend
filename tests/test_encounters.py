@@ -368,6 +368,18 @@ def test_patient_summary_masked_for_it_and_center_manager(
 # ---------------------------------------------------------------------------
 
 
+def test_server_timezone_is_clinic_local_not_utc():
+    """generate_encounter_number's YYYYMMDD prefix comes from
+    timezone.localdate(), which is only the clinic's actual calendar day if
+    TIME_ZONE is the clinic's own zone -- defaulting to UTC (as Django does
+    out of the box) silently shifts the admission-number date by several
+    hours whenever "now" and UTC-midnight fall on different local days.
+    """
+    from django.conf import settings
+
+    assert settings.TIME_ZONE == "America/Santo_Domingo"
+
+
 def test_encounter_number_is_date_and_daily_sequence(auth_client, admin_user, doctor_user):
     from django.utils import timezone
 
