@@ -17,7 +17,8 @@ from apps.encounters.serializers import EncounterSerializer
 
 class EncounterViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Encounter.all_objects.select_related(
-        "patient", "doctor__user", "room", "center", "service_type", "ars", "ars_program",
+        "patient", "patient__ars", "patient__ars_program",
+        "doctor__user", "room", "center", "service_type", "ars", "ars_program",
         "created_by",
     ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
     serializer_class = EncounterSerializer

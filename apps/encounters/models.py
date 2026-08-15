@@ -93,6 +93,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
+            models.Index(fields=["created_at"]),
             models.Index(fields=["patient", "status"]),
             models.Index(fields=["status", "created_at"]),
         ]
