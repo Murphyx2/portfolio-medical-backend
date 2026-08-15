@@ -3,7 +3,6 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
 from django.http import FileResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
@@ -15,10 +14,9 @@ from rest_framework.views import APIView
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import (
     CanManageRecords,
-    IsDoctorOrNurse,
     IsStaffUser,
 )
-from apps.core.services import client_ip, log_audit, user_accessible_center_ids
+from apps.core.services import client_ip, log_audit, scope_queryset
 from apps.records.filters import RecordSearchFilter
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
@@ -44,12 +42,7 @@ class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        user = self.request.user
-        if getattr(user, "is_doctor", False):
-            center_ids = user_accessible_center_ids(user)
-            qs = qs.filter(Q(center_id__in=center_ids) | Q(created_by=user))
-        return qs
+        return scope_queryset(super().get_queryset(), self.request.user, owner_field="created_by")
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -74,12 +67,7 @@ class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        user = self.request.user
-        if getattr(user, "is_doctor", False):
-            center_ids = user_accessible_center_ids(user)
-            qs = qs.filter(Q(center_id__in=center_ids) | Q(doctor=user))
-        return qs
+        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor")
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -106,14 +94,12 @@ class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        user = self.request.user
-        if getattr(user, "is_doctor", False):
-            center_ids = user_accessible_center_ids(user)
-            qs = qs.filter(
-                Q(record__center_id__in=center_ids) | Q(record__created_by=user)
-            )
-        return qs
+        return scope_queryset(
+            super().get_queryset(),
+            self.request.user,
+            center_field="record__center",
+            owner_field="record__created_by",
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):

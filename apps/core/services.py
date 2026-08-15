@@ -77,6 +77,10 @@ def user_accessible_center_ids(user) -> set[int]:
     Admins can access all centers. Doctors are scoped to their approved
     center bindings. Other staff roles have no center relationship in the
     data model yet, so they are treated as center-agnostic (full scope).
+
+    NOTE: an empty return value is ambiguous (admin=all, staff=center-
+    agnostic, doctor-no-bindings=nothing). Prefer ``scope_queryset`` below
+    for new callers; it resolves that ambiguity into a shaped queryset.
     """
     if not getattr(user, "is_authenticated", False):
         return set()
@@ -91,6 +95,29 @@ def user_accessible_center_ids(user) -> set[int]:
             ).values_list("center_id", flat=True)
         )
     return set()
+
+
+def scope_queryset(qs, user, *, center_field="center", owner_field=None):
+    """Scope ``qs`` to what ``user`` may access, resolving the ambiguous empty
+    set of ``user_accessible_center_ids`` into the correct shape:
+
+    - admins and non-doctor staff: full scope (their empty center set means
+      "all", never "nothing")
+    - doctors: rows in their approved centers, plus (optionally) rows they own
+      via ``owner_field`` (e.g. ``created_by``) -- a doctor with no approved
+      bindings sees only their own rows, not nothing.
+
+    ``center_field`` is the relation path to the center FK (default
+    ``"center"``; use e.g. ``"record__center"`` when scoping through a join).
+    """
+    if not getattr(user, "is_doctor", False):
+        return qs
+    from django.db.models import Q
+
+    q = Q(**{f"{center_field}_id__in": user_accessible_center_ids(user)})
+    if owner_field:
+        q |= Q(**{owner_field: user})
+    return qs.filter(q)
 
 
 def log_audit(
