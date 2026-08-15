@@ -1,23 +1,12 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from apps.core.services import can_view_inactive, is_masked_role
+from apps.core.masking import apply_masking
+from apps.core.serializers import CoreModelSerializer
 from apps.doctors.models import DoctorProfile
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 from apps.patients.filters import patient_age
 from apps.patients.models import Patient
-from apps.patients.serializers import _mask
-
-# Free-text clinical fields masked for anyone who isn't a doctor/nurse/admin
-# -- same convention as apps.records.serializers.CLINICAL_FIELDS, so a
-# receptionist/center-manager can still administer the encounter (dates,
-# room, coverage, status) without seeing clinical narrative text.
-CLINICAL_FIELDS = ["chief_complaint"]
-
-
-def _request_user(context):
-    request = context.get("request")
-    return getattr(request, "user", None) if request else None
 
 
 class PatientSummarySerializer(serializers.ModelSerializer):
@@ -83,7 +72,7 @@ class EncounterServiceSerializer(serializers.ModelSerializer):
         ]
 
 
-class EncounterSerializer(serializers.ModelSerializer):
+class EncounterSerializer(CoreModelSerializer):
     patient_info = PatientSummarySerializer(source="patient", read_only=True)
     doctor_info = DoctorLiteSerializer(source="doctor", read_only=True)
     room_name = serializers.CharField(source="room.name", read_only=True, default=None)
@@ -144,19 +133,13 @@ class EncounterSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
-
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
 
     def validate_doctor(self, value):
         if value is None:
             return value
-        user = _request_user(self.context)
+        user = self._request_user()
         if user and user.is_authenticated and getattr(user, "is_doctor", False):
             if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
                 raise serializers.ValidationError(
@@ -198,7 +181,7 @@ class EncounterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         diagnoses = validated_data.pop("diagnoses", [])
         services = validated_data.pop("services", [])
-        user = _request_user(self.context)
+        user = self._request_user()
         encounter = Encounter.objects.create(created_by=user, **validated_data)
         self._set_diagnoses(encounter, diagnoses)
         self._set_services(encounter, services)
@@ -273,31 +256,23 @@ class EncounterSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        user = _request_user(self.context)
-        if user and not (
-            getattr(user, "is_doctor", False)
-            or getattr(user, "is_nurse", False)
-            or getattr(user, "is_admin", False)
-        ):
-            for field in CLINICAL_FIELDS:
-                if data.get(field):
-                    data[field] = _mask(str(data[field]))
-            for diagnosis in data.get("diagnoses") or []:
-                if diagnosis.get("description"):
-                    diagnosis["description"] = _mask(str(diagnosis["description"]))
-        if user and is_masked_role(user):
-            patient_info = data.get("patient_info")
-            if patient_info:
-                for field in (
-                    "full_name",
-                    "cedula",
-                    "allergies",
-                    "critical_conditions",
-                    "guardian_cedula",
-                ):
-                    if patient_info.get(field):
-                        patient_info[field] = _mask(str(patient_info[field]))
-                patient_info["age"] = None
-            if data.get("created_by_name"):
-                data["created_by_name"] = _mask(str(data["created_by_name"]))
-        return data
+        return apply_masking(
+            data,
+            self._request_user(),
+            clinical_fields=("chief_complaint",),
+            clinical_nested=(("diagnoses", ("description",)),),
+            masked_fields=("created_by_name",),
+            masked_nested=(
+                (
+                    "patient_info",
+                    (
+                        "full_name",
+                        "cedula",
+                        "allergies",
+                        "critical_conditions",
+                        "guardian_cedula",
+                    ),
+                ),
+            ),
+            masked_nested_nulls=(("patient_info", ("age",)),),
+        )

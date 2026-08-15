@@ -1,40 +1,23 @@
 from rest_framework import serializers
 
 from apps.ars.models import ARS, ARSProgram
-from apps.core.services import can_view_inactive
+from apps.core.serializers import CoreModelSerializer
 
 
-def _request_user(context):
-    request = context.get("request")
-    return getattr(request, "user", None) if request else None
-
-
-class ARSProgramSerializer(serializers.ModelSerializer):
+class ARSProgramSerializer(CoreModelSerializer):
     id = serializers.IntegerField(required=False)
 
     class Meta:
         model = ARSProgram
         fields = ["id", "name", "active"]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
 
-
-class ARSSerializer(serializers.ModelSerializer):
+class ARSSerializer(CoreModelSerializer):
     programs = ARSProgramSerializer(many=True, required=False)
 
     class Meta:
         model = ARS
         fields = ["id", "ars_id", "name", "programs", "active"]
-
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
 
     def create(self, validated_data):
         programs = validated_data.pop("programs", [])
