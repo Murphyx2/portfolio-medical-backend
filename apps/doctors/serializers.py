@@ -2,18 +2,13 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
-from apps.core.services import can_view_inactive
+from apps.core.masking import mask_doctor_contact
+from apps.core.serializers import CoreModelSerializer
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
-from apps.patients.serializers import _mask
 
 
-def _request_user(context):
-    request = context.get("request")
-    return getattr(request, "user", None) if request else None
-
-
-class DoctorProfileSerializer(serializers.ModelSerializer):
+class DoctorProfileSerializer(CoreModelSerializer):
     full_name = serializers.CharField(read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
     user_id = serializers.IntegerField(source="user.id", read_only=True)
@@ -45,32 +40,9 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["code"]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
-
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get("request") if self.context else None
-        user = getattr(request, "user", None) if request else None
-        is_self = bool(user and instance.user_id == getattr(user, "id", None))
-        if user and not (user.is_admin or user.is_it) and not is_self:
-            # Doctor contact PII (M-03) is only for admins/IT and the doctor
-            # themself; other staff keep name/specialty but see masked contact.
-            # Exception: receptionists need unmasked phone/email to coordinate
-            # appointments, but license_number/bio stay hidden from them too.
-            is_receptionist = getattr(user, "is_receptionist", False)
-            if data.get("license_number"):
-                data["license_number"] = _mask(str(data["license_number"]))
-            if not is_receptionist:
-                if data.get("contact_phone"):
-                    data["contact_phone"] = _mask(str(data["contact_phone"]))
-                if data.get("contact_email"):
-                    data["contact_email"] = _mask(str(data["contact_email"]))
-            data["bio"] = None
-        return data
+        return mask_doctor_contact(data, self._request_user(), instance)
 
     def validate_contact_phone(self, value: str) -> str:
         return validate_phone(value)
@@ -85,7 +57,7 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         return value
 
 
-class DoctorScheduleSerializer(serializers.ModelSerializer):
+class DoctorScheduleSerializer(CoreModelSerializer):
     doctor_full_name = serializers.CharField(source="doctor.full_name", read_only=True)
     center_name = serializers.CharField(source="center.name", read_only=True)
 
@@ -106,12 +78,6 @@ class DoctorScheduleSerializer(serializers.ModelSerializer):
         read_only_fields = ["weekday_label"]
 
     weekday_label = serializers.SerializerMethodField()
-
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
 
     def get_weekday_label(self, obj):
         return obj.get_weekday_display()

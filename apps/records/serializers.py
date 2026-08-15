@@ -5,24 +5,13 @@ from PIL import Image
 from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
-from apps.core.services import (
-    can_view_inactive,
-    is_masked_role,
-    sign_media_token,
-    user_accessible_center_ids,
-)
-
-
-def _request_user(context):
-    request = context.get("request")
-    return getattr(request, "user", None) if request else None
+from apps.core.masking import apply_masking
+from apps.core.serializers import CoreModelSerializer
+from apps.core.services import sign_media_token, user_accessible_center_ids
 from apps.patients.models import Patient
-from apps.patients.serializers import _mask
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
-
-CLINICAL_FIELDS = ["diagnosis", "treatment", "medicine_and_doses", "notes"]
 
 
 def _validate_patient_scope(context, attrs, user, instance):
@@ -46,19 +35,13 @@ class PatientLiteSerializer(serializers.ModelSerializer):
         fields = ["id", "full_name", "gender", "cedula", "nss"]
 
 
-class RecordImageSerializer(serializers.ModelSerializer):
+class RecordImageSerializer(CoreModelSerializer):
     image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = RecordImage
         fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active"]
         read_only_fields = ["id", "image_url", "uploaded_by"]
-
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
 
     def validate_image(self, value):
         if value is None:
@@ -104,7 +87,7 @@ class RecordImageSerializer(serializers.ModelSerializer):
         return signed
 
 
-class MedicalRecordSerializer(serializers.ModelSerializer):
+class MedicalRecordSerializer(CoreModelSerializer):
     patient_info = PatientLiteSerializer(source="patient", read_only=True)
     created_by_name = serializers.SerializerMethodField()
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
@@ -131,12 +114,6 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_by", "date"]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
-
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
 
@@ -156,25 +133,16 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and not (user.is_doctor or user.is_nurse or user.is_admin):
-            for field in CLINICAL_FIELDS:
-                if data.get(field):
-                    data[field] = _mask(str(data[field]))
-        if user and is_masked_role(user):
-            patient_info = data.get("patient_info")
-            if patient_info and patient_info.get("full_name"):
-                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
-            for field in ("cedula", "nss"):
-                if patient_info and patient_info.get(field):
-                    patient_info[field] = _mask(str(patient_info[field]))
-            if data.get("created_by_name"):
-                data["created_by_name"] = _mask(str(data["created_by_name"]))
-        return data
+        return apply_masking(
+            data,
+            self._request_user(),
+            clinical_fields=("diagnosis", "treatment", "medicine_and_doses", "notes"),
+            masked_fields=("created_by_name",),
+            masked_nested=(("patient_info", ("full_name", "cedula", "nss")),),
+        )
 
 
-class ConsultationLogSerializer(serializers.ModelSerializer):
+class ConsultationLogSerializer(CoreModelSerializer):
     patient_info = PatientLiteSerializer(source="patient", read_only=True)
     doctor_name = serializers.SerializerMethodField()
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
@@ -199,12 +167,6 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "doctor", "date"]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        if not can_view_inactive(_request_user(self.context)):
-            fields["active"].read_only = True
-        return fields
-
     def get_doctor_name(self, obj):
         return obj.doctor.get_full_name() or obj.doctor.username
 
@@ -224,19 +186,10 @@ class ConsultationLogSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and not (user.is_doctor or user.is_nurse or user.is_admin):
-            for field in ("subjective", "objective", "assessment", "plan", "notes"):
-                if data.get(field):
-                    data[field] = _mask(str(data[field]))
-        if user and is_masked_role(user):
-            patient_info = data.get("patient_info")
-            if patient_info and patient_info.get("full_name"):
-                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
-            for field in ("cedula", "nss"):
-                if patient_info and patient_info.get(field):
-                    patient_info[field] = _mask(str(patient_info[field]))
-            if data.get("doctor_name"):
-                data["doctor_name"] = _mask(str(data["doctor_name"]))
-        return data
+        return apply_masking(
+            data,
+            self._request_user(),
+            clinical_fields=("subjective", "objective", "assessment", "plan", "notes"),
+            masked_fields=("doctor_name",),
+            masked_nested=(("patient_info", ("full_name", "cedula", "nss")),),
+        )

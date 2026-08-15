@@ -1,9 +1,9 @@
 from rest_framework import serializers
 
 from apps.appointments.models import Appointment
-from apps.core.services import can_view_inactive, is_masked_role
+from apps.core.masking import apply_masking
+from apps.core.serializers import CoreModelSerializer
 from apps.patients.models import Patient
-from apps.patients.serializers import _mask
 from apps.doctors.models import DoctorProfile
 
 
@@ -23,7 +23,7 @@ class DoctorLiteSerializer(serializers.ModelSerializer):
         fields = ["id", "full_name", "specialty"]
 
 
-class AppointmentSerializer(serializers.ModelSerializer):
+class AppointmentSerializer(CoreModelSerializer):
     patient_info = PatientLiteSerializer(source="patient", read_only=True)
     doctor_info = DoctorLiteSerializer(source="doctor", read_only=True)
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
@@ -50,14 +50,6 @@ class AppointmentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_by", "created_at"]
 
-    def get_fields(self):
-        fields = super().get_fields()
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if not can_view_inactive(user):
-            fields["active"].read_only = True
-        return fields
-
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
 
@@ -73,14 +65,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and is_masked_role(user):
-            patient_info = data.get("patient_info")
-            if patient_info and patient_info.get("full_name"):
-                patient_info["full_name"] = _mask(str(patient_info["full_name"]))
-            if data.get("created_by_name"):
-                data["created_by_name"] = _mask(str(data["created_by_name"]))
-            if data.get("notes"):
-                data["notes"] = _mask(str(data["notes"]))
-        return data
+        return apply_masking(
+            data,
+            self._request_user(),
+            masked_fields=("created_by_name", "notes"),
+            masked_nested=(("patient_info", ("full_name",)),),
+        )

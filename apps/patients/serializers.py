@@ -7,7 +7,8 @@ from django.core.validators import validate_email
 from rest_framework import serializers
 
 from apps.core.encryption import blind_index_digits
-from apps.core.services import can_view_inactive, is_masked_role
+from apps.core.masking import apply_masking
+from apps.core.serializers import CoreModelSerializer
 from apps.core.validators import validate_phone
 from apps.patients.filters import patient_age
 from apps.patients.models import Patient
@@ -28,15 +29,7 @@ _GUARDIAN_TRIGGER_KEYS = (
 )
 
 
-def _mask(value: str) -> str:
-    if not value:
-        return value
-    if len(value) <= 4:
-        return "••••"
-    return f"{value[:2]}••••{value[-2:]}"
-
-
-class PatientSerializer(serializers.ModelSerializer):
+class PatientSerializer(CoreModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
     ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
@@ -94,13 +87,7 @@ class PatientSerializer(serializers.ModelSerializer):
         fields["birth_date"].required = True
         fields["birth_date"].allow_blank = False
         fields["gender"].required = True
-        if not can_view_inactive(self._request_user()):
-            fields["active"].read_only = True
         return fields
-
-    def _request_user(self):
-        request = self.context.get("request")
-        return getattr(request, "user", None) if request else None
 
     def get_age(self, obj) -> int | None:
         return patient_age(obj)
@@ -261,12 +248,10 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and user.is_authenticated and is_masked_role(user):
-            # IT and center managers see redacted contact PII, identifiers,
-            # and names/birth date.
-            for field in (
+        return apply_masking(
+            data,
+            self._request_user(),
+            masked_fields=(
                 "phone",
                 "address",
                 "email",
@@ -279,11 +264,10 @@ class PatientSerializer(serializers.ModelSerializer):
                 "guardian_phone",
                 "allergies",
                 "critical_conditions",
-            ):
-                data[field] = _mask(data[field])
-            data["first_name"] = _mask(data["first_name"])
-            data["last_name"] = _mask(data["last_name"])
-            data["full_name"] = _mask(data["full_name"])
-            data["birth_date"] = _mask(data["birth_date"]) if data.get("birth_date") else data.get("birth_date")
-            data["age"] = None
-        return data
+                "first_name",
+                "last_name",
+                "full_name",
+                "birth_date",
+            ),
+            masked_nulls=("age",),
+        )
