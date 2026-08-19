@@ -1,5 +1,5 @@
 from apps.appointments.models import Appointment
-from apps.centers.models import MedicalCenter
+from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
@@ -155,6 +155,60 @@ def test_nurse_cannot_create_appointment(auth_client, nurse_user, receptionist_u
         format="json",
     )
     assert res.status_code in (401, 403)
+
+
+def test_doctor_sees_colleagues_appointment_at_shared_center(
+    auth_client, doctor_user, receptionist_user, admin_user, make_user
+):
+    """A doctor bound to a center sees another doctor's appointment at that
+    same center (matching Patients/Records center-shared scoping), not just
+    appointments for themself."""
+    from apps.accounts.models import User
+
+    patient = _make_patient(receptionist_user)
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    own_doctor = _make_doctor(doctor_user)
+    DoctorCenterBinding.objects.create(
+        doctor=own_doctor, center=center, approved=True, approved_by=admin_user
+    )
+    other_user = make_user("doctor2", User.Role.DOCTOR)
+    other_doctor = _make_doctor(other_user)
+    Appointment.objects.create(
+        patient=patient,
+        doctor=other_doctor,
+        center=center,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(doctor_user).get("/api/appointments/")
+    assert res.data["count"] == 1
+
+
+def test_doctor_without_binding_does_not_see_other_centers_appointment(
+    auth_client, doctor_user, receptionist_user, admin_user, make_user
+):
+    """A doctor with no approved binding to a center still sees nothing
+    there, even for another doctor's appointment -- only their own rows."""
+    from apps.accounts.models import User
+
+    patient = _make_patient(receptionist_user)
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    _make_doctor(doctor_user)
+    other_user = make_user("doctor2", User.Role.DOCTOR)
+    other_doctor = _make_doctor(other_user)
+    Appointment.objects.create(
+        patient=patient,
+        doctor=other_doctor,
+        center=center,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(doctor_user).get("/api/appointments/")
+    assert res.data["count"] == 0
 
 
 def test_cancel_appointment_only_receptionist_or_admin(

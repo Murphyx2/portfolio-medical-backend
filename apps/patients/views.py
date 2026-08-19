@@ -3,7 +3,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter
 
-from apps.core.mixins import AuditMixin
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanDeletePatient, PatientDataPermission
 from apps.core.services import is_masked_role, user_accessible_center_ids
 from apps.patients.filters import PatientSearchFilter
@@ -35,10 +35,11 @@ def _create_initial_record(patient: Patient, user) -> None:
     )
 
 
-class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
+class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Patient.all_objects.select_related("ars", "ars_program", "center").all()
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
+    delete_permission_classes = [CanDeletePatient]
     filter_backends = [DjangoFilterBackend, PatientSearchFilter, OrderingFilter]
     filterset_fields = ["search_name", "gender", "ars", "center"]
     ordering_fields = [
@@ -48,11 +49,6 @@ class PatientViewSet(AuditMixin, viewsets.ModelViewSet):
         "ars_program__name",
         "center__name",
     ]
-
-    def get_permissions(self):
-        if self.request.method == "DELETE":
-            self.permission_classes = [CanDeletePatient]
-        return super().get_permissions()
 
     def perform_create(self, serializer):
         super().perform_create(serializer)

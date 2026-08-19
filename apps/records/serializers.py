@@ -27,6 +27,19 @@ def _validate_patient_scope(context, attrs, user, instance):
         )
 
 
+def _validate_center_scope(context, attrs):
+    """Doctors may only write records/logs at a center they're approved for."""
+    user = getattr(context.get("request"), "user", None)
+    center = attrs.get("center")
+    if user and center is not None and getattr(user, "is_doctor", False):
+        if not DoctorCenterBinding.objects.filter(
+            doctor__user=user, center=center, approved=True
+        ).exists():
+            raise serializers.ValidationError(
+                {"center": "You are not approved to work at this center."}
+            )
+
+
 class PatientLiteSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
 
@@ -119,15 +132,7 @@ class MedicalRecordSerializer(CoreModelSerializer):
 
     def validate(self, attrs):
         user = getattr(self.context.get("request"), "user", None)
-        center = attrs.get("center")
-        if user and center is not None:
-            user_obj = self.context["request"].user
-            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
-                doctor__user=user_obj, center=center, approved=True
-            ).exists():
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
+        _validate_center_scope(self.context, attrs)
         _validate_patient_scope(self.context, attrs, user, self.instance)
         return attrs
 
@@ -172,15 +177,7 @@ class ConsultationLogSerializer(CoreModelSerializer):
 
     def validate(self, attrs):
         user = getattr(self.context.get("request"), "user", None)
-        center = attrs.get("center")
-        if user and center is not None:
-            user_obj = self.context["request"].user
-            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
-                doctor__user=user_obj, center=center, approved=True
-            ).exists():
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
+        _validate_center_scope(self.context, attrs)
         _validate_patient_scope(self.context, attrs, user, self.instance)
         return attrs
 

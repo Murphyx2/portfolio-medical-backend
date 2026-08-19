@@ -1,4 +1,5 @@
 from rest_framework.decorators import action
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
 from apps.core.services import (
@@ -8,6 +9,30 @@ from apps.core.services import (
     log_audit,
     soft_delete_field_name,
 )
+
+
+class SwapPermissionsMixin:
+    """Declarative version of the "swap permission_classes for non-SAFE
+    methods" get_permissions() body repeated across most ViewSets in this
+    codebase: set ``write_permission_classes`` (and optionally
+    ``delete_permission_classes``, for a stricter/different DELETE gate) as
+    class attributes instead of overriding get_permissions() by hand.
+
+    ViewSets whose permission logic doesn't fit this two-tier shape (an
+    extra restore branch, a custom write gate paired with a bespoke action,
+    etc.) should keep writing their own get_permissions() override rather
+    than stretching this mixin to cover them.
+    """
+
+    write_permission_classes = None
+    delete_permission_classes = None
+
+    def get_permissions(self):
+        if self.request.method == "DELETE" and self.delete_permission_classes:
+            self.permission_classes = self.delete_permission_classes
+        elif self.request.method not in SAFE_METHODS and self.write_permission_classes:
+            self.permission_classes = self.write_permission_classes
+        return super().get_permissions()
 
 
 class AuditMixin:
@@ -84,3 +109,27 @@ class AuditMixin:
             target=instance,
             ip_address=client_ip(self.request),
         )
+
+    def log_action(self, obj, action: str, details: dict | None = None):
+        """For custom @action state-transition endpoints (admit/cancel/
+        approve/...) that mutate a row outside the create/update/destroy
+        path perform_create/perform_update/perform_destroy above already
+        audit -- avoids each one hand-rolling its own log_audit() call.
+        """
+        log_audit(
+            user=self.request.user,
+            action=action,
+            target=obj,
+            ip_address=client_ip(self.request),
+            details=details or {},
+        )
+
+    def perform_create_with_owner(self, serializer, owner_field: str):
+        """perform_create() variant for ViewSets that stamp the creating
+        user onto a specific FK (created_by/doctor/uploaded_by/...) instead
+        of relying on the serializer alone -- bypasses the base
+        perform_create() above (which doesn't know the owner field) and
+        audits directly via log_action() instead.
+        """
+        serializer.save(**{owner_field: self.request.user})
+        self.log_action(serializer.instance, "CREATE")

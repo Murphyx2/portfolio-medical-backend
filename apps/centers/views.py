@@ -12,27 +12,24 @@ from apps.centers.serializers import (
     MedicalCenterSerializer,
 )
 from apps.core.caching import CachedListViewMixin
-from apps.core.mixins import AuditMixin
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import IsAdmin, IsAdminOrIT, IsStaffUser
-from apps.core.services import client_ip, log_audit
 
 
-class MedicalCenterViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
+class MedicalCenterViewSet(
+    SwapPermissionsMixin, AuditMixin, CachedListViewMixin, viewsets.ModelViewSet
+):
     cache_model = "medicalcenter"
     queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
     permission_classes = [IsStaffUser]
+    write_permission_classes = [IsAdminOrIT]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrIT]
-        return super().get_permissions()
 
 
 class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -63,11 +60,5 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
         binding.approved = True
         binding.approved_by = request.user
         binding.save()
-        log_audit(
-            user=request.user,
-            action="UPDATE",
-            target=binding,
-            ip_address=client_ip(request),
-            details={"approved": True},
-        )
+        self.log_action(binding, "UPDATE", details={"approved": True})
         return Response(self.get_serializer(binding).data)
