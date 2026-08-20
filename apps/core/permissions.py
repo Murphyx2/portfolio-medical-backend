@@ -5,9 +5,48 @@ from apps.accounts.models import User
 from apps.core.services import can_view_inactive, user_accessible_center_ids
 
 
-class IsAdmin(BasePermission):
+def is_staff_role(user) -> bool:
+    """The one canonical definition of "staff" -- explicit 6-role
+    membership. `IsStaffUser` delegates here instead of re-checking
+    `is_authenticated` on its own, so a future 7th role only needs updating
+    in one place instead of silently diverging between the two."""
+    if not user or not user.is_authenticated:
+        return False
+    return user.role in (
+        User.Role.ADMIN,
+        User.Role.DOCTOR,
+        User.Role.RECEPTIONIST,
+        User.Role.IT,
+        User.Role.NURSE,
+        User.Role.CENTER_MANAGER,
+    )
+
+
+def is_owner_doctor(user, obj) -> bool:
+    """True unless `user` is a doctor who doesn't own `obj.doctor` --
+    previously copy-pasted identically across CanDeleteAppointments,
+    CanManageAppointments, and CanManageEncounters."""
+    return not (getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id)
+
+
+class RoleUnionPermission(BasePermission):
+    """Composable base for the many "one of these roles" permission
+    classes that used to each hand-write the same
+    `request.user and request.user.is_authenticated and (role or role...)`
+    body. Subclasses just set `allowed_roles`."""
+
+    allowed_roles: tuple = ()
+
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.is_admin)
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in self.allowed_roles
+        )
+
+
+class IsAdmin(RoleUnionPermission):
+    allowed_roles = (User.Role.ADMIN,)
 
 
 class CanViewInactive(BasePermission):
@@ -20,95 +59,61 @@ class CanViewInactive(BasePermission):
         return can_view_inactive(request.user)
 
 
-class IsIT(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.is_it)
+class IsIT(RoleUnionPermission):
+    allowed_roles = (User.Role.IT,)
 
 
-class IsAdminOrIT(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_it)
-        )
+class IsAdminOrIT(RoleUnionPermission):
+    allowed_roles = (User.Role.ADMIN, User.Role.IT)
 
 
-class IsAdminOrITOrCenterManager(BasePermission):
+class IsAdminOrITOrCenterManager(RoleUnionPermission):
     """Doctor profile writes: ADMIN/IT manage the general fields; a
     CENTER_MANAGER is admitted at this view-permission layer too, but
     DoctorProfileSerializer.validate() confines them to the `services` field
     only -- this class alone doesn't distinguish which fields a request
     touches (DRF permissions are method-wide, not field-scoped)."""
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_it or request.user.is_center_manager)
-        )
+    allowed_roles = (User.Role.ADMIN, User.Role.IT, User.Role.CENTER_MANAGER)
 
 
-class IsDoctor(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.is_doctor)
+class IsDoctor(RoleUnionPermission):
+    allowed_roles = (User.Role.DOCTOR,)
 
 
-class IsReceptionist(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.is_receptionist
-        )
+class IsReceptionist(RoleUnionPermission):
+    allowed_roles = (User.Role.RECEPTIONIST,)
 
 
-class CanDeletePatient(BasePermission):
+class CanDeletePatient(RoleUnionPermission):
     """Only admins and doctors may delete patients (receptionists excluded)."""
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_doctor)
-        )
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
 
 
-class CanDeleteAppointments(BasePermission):
+class CanDeleteAppointments(RoleUnionPermission):
     """Only admins and doctors may delete appointments (receptionists excluded)."""
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_doctor)
-        )
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        user = request.user
-        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
-            return False
-        return True
+        return is_owner_doctor(request.user, obj)
 
 
-class CanManageMedicines(BasePermission):
+class CanManageMedicines(RoleUnionPermission):
     """Admins, IT, and receptionists may create/update medicines; delete
     stays IsAdminOrIT-only (see medicines/views.py get_permissions)."""
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_it or request.user.is_receptionist)
-        )
+    allowed_roles = (User.Role.ADMIN, User.Role.IT, User.Role.RECEPTIONIST)
 
 
 class CanManageRooms(BasePermission):
     """Admins and IT may create/update rooms; receptionists may update
     existing rooms but not create new ones (delete stays IsAdminOrIT-only,
-    see rooms/views.py get_permissions)."""
+    see rooms/views.py get_permissions). Method-conditional role sets don't
+    fit the flat RoleUnionPermission shape, so this stays hand-written."""
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
@@ -118,36 +123,21 @@ class CanManageRooms(BasePermission):
         return request.user.is_admin or request.user.is_it or request.user.is_receptionist
 
 
-class IsAdminOrCenterManager(BasePermission):
+class IsAdminOrCenterManager(RoleUnionPermission):
     """Admins and center managers may manage services."""
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_admin or request.user.is_center_manager)
-        )
+    allowed_roles = (User.Role.ADMIN, User.Role.CENTER_MANAGER)
 
 
-class IsDoctorOrReceptionist(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_doctor or request.user.is_receptionist)
-        )
+class IsDoctorOrReceptionist(RoleUnionPermission):
+    allowed_roles = (User.Role.DOCTOR, User.Role.RECEPTIONIST)
 
 
-class IsDoctorOrNurse(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (request.user.is_doctor or request.user.is_nurse)
-        )
+class IsDoctorOrNurse(RoleUnionPermission):
+    allowed_roles = (User.Role.DOCTOR, User.Role.NURSE)
 
 
-class CanManageRecords(BasePermission):
+class CanManageRecords(RoleUnionPermission):
     """Doctors, nurses, and admins may create/update medical records.
 
     Object-level checks (M-02): updates/deletes stay inside the actor's scope —
@@ -156,16 +146,7 @@ class CanManageRecords(BasePermission):
     nurse-to-center relationship yet, so "own records" is the safest scope).
     """
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (
-                request.user.is_doctor
-                or request.user.is_nurse
-                or request.user.is_admin
-            )
-        )
+    allowed_roles = (User.Role.DOCTOR, User.Role.NURSE, User.Role.ADMIN)
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
@@ -188,13 +169,17 @@ class CanManageRecords(BasePermission):
 
 
 class IsStaffUser(BasePermission):
-    """Any authenticated staff role (all roles except none)."""
+    """Any authenticated staff role -- delegates to `is_staff_role`, the one
+    canonical 6-role membership definition, instead of re-checking
+    `is_authenticated` independently (the two were behaviorally identical
+    but independently maintained, a future-drift risk if a 7th role is ever
+    added to one and not the other)."""
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated)
+        return is_staff_role(request.user)
 
 
-class CanManageAppointments(BasePermission):
+class CanManageAppointments(RoleUnionPermission):
     """Doctors, receptionists, and admins may create/update appointments.
 
     Object-level: a doctor may only write to appointments assigned to them
@@ -203,44 +188,16 @@ class CanManageAppointments(BasePermission):
     colleague's appointment at the same center.
     """
 
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (
-                request.user.is_doctor
-                or request.user.is_receptionist
-                or request.user.is_admin
-            )
-        )
+    allowed_roles = (User.Role.DOCTOR, User.Role.RECEPTIONIST, User.Role.ADMIN)
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        user = request.user
-        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
-            return False
-        return True
+        return is_owner_doctor(request.user, obj)
 
 
-class IsCenterManager(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user and request.user.is_authenticated and request.user.is_center_manager
-        )
-
-
-def is_staff_role(user) -> bool:
-    if not user or not user.is_authenticated:
-        return False
-    return user.role in (
-        User.Role.ADMIN,
-        User.Role.DOCTOR,
-        User.Role.RECEPTIONIST,
-        User.Role.IT,
-        User.Role.NURSE,
-        User.Role.CENTER_MANAGER,
-    )
+class IsCenterManager(RoleUnionPermission):
+    allowed_roles = (User.Role.CENTER_MANAGER,)
 
 
 class CanManageEncounters(BasePermission):
@@ -249,7 +206,8 @@ class CanManageEncounters(BasePermission):
     elsewhere). Object-level: doctors are restricted to their own
     encounters, and no one may edit an encounter once it's COMPLETED/
     CANCELLED or has a COMPLETED service line (billed/administered work
-    shouldn't be rewritten after the fact).
+    shouldn't be rewritten after the fact) -- see
+    Encounter.is_locked_for_edit().
     """
 
     def has_permission(self, request, view):
@@ -268,14 +226,10 @@ class CanManageEncounters(BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        user = request.user
-        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
+        if not is_owner_doctor(request.user, obj):
             return False
-        if not getattr(user, "is_admin", False):
-            if obj.status in ("COMPLETED", "CANCELLED"):
-                return False
-            if obj.services.filter(status="COMPLETED").exists():
-                return False
+        if not getattr(request.user, "is_admin", False) and obj.is_locked_for_edit():
+            return False
         return True
 
 
