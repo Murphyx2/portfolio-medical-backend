@@ -29,6 +29,32 @@ _GUARDIAN_TRIGGER_KEYS = (
 )
 
 
+def _normalize_cedula_digits(value: str, *, field_label: str = "Cedula") -> str:
+    """Shared by validate_cedula/validate_guardian_cedula. Strips separators
+    from the formatted display form (e.g. "001-1234567-8") rather than
+    requiring a pure digit string -- unlike NSS below, cedula input commonly
+    carries dashes.
+    """
+    digits = re.sub(r"\D", "", str(value))
+    if len(digits) != 11:
+        raise serializers.ValidationError(f"{field_label} must contain exactly 11 digits.")
+    return digits
+
+
+def _normalize_nss_digits(value: str, *, field_label: str = "NSS") -> str:
+    """Shared by validate_nss/validate_guardian_nss. NFKC folds fullwidth/
+    halfwidth forms into ASCII (e.g. "１２３" -> "123"); anything that does
+    not fold to ASCII digits (letters, symbols, dashes, other scripts) is
+    rejected rather than stripped.
+    """
+    normalized = unicodedata.normalize("NFKC", str(value))
+    if not normalized.isascii() or not normalized.isdigit():
+        raise serializers.ValidationError(f"{field_label} must contain digits only.")
+    if len(normalized) > 11:
+        raise serializers.ValidationError(f"{field_label} must be at most 11 digits.")
+    return normalized
+
+
 class PatientSerializer(CoreModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
@@ -108,11 +134,7 @@ class PatientSerializer(CoreModelSerializer):
 
     def validate_cedula(self, value: str) -> str:
         if value:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) != 11:
-                raise serializers.ValidationError(
-                    "Cedula must contain exactly 11 digits."
-                )
+            digits = _normalize_cedula_digits(value)
             self._check_unique_digits(
                 "cedula", digits, "A patient with this cedula already exists."
             )
@@ -147,14 +169,7 @@ class PatientSerializer(CoreModelSerializer):
     def validate_nss(self, value: str) -> str:
         if not value:
             return value
-        # NFKC folds fullwidth/halfwidth forms into ASCII (e.g. "１２３" -> "123");
-        # anything that does not fold to ASCII digits (letters, symbols, other
-        # scripts) is rejected, and at most 11 digits are allowed.
-        normalized = unicodedata.normalize("NFKC", str(value))
-        if not normalized.isascii() or not normalized.isdigit():
-            raise serializers.ValidationError("NSS must contain digits only.")
-        if len(normalized) > 11:
-            raise serializers.ValidationError("NSS must be at most 11 digits.")
+        normalized = _normalize_nss_digits(value)
         self._check_unique_digits(
             "nss", normalized, "A patient with this NSS already exists."
         )
@@ -162,23 +177,13 @@ class PatientSerializer(CoreModelSerializer):
 
     def validate_guardian_cedula(self, value: str) -> str:
         if value:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) != 11:
-                raise serializers.ValidationError(
-                    "Guardian cedula must contain exactly 11 digits."
-                )
-            return digits
+            return _normalize_cedula_digits(value, field_label="Guardian cedula")
         return value
 
     def validate_guardian_nss(self, value: str) -> str:
         if not value:
             return value
-        normalized = unicodedata.normalize("NFKC", str(value))
-        if not normalized.isascii() or not normalized.isdigit():
-            raise serializers.ValidationError("Guardian NSS must contain digits only.")
-        if len(normalized) > 11:
-            raise serializers.ValidationError("Guardian NSS must be at most 11 digits.")
-        return normalized
+        return _normalize_nss_digits(value, field_label="Guardian NSS")
 
     def validate_guardian_phone(self, value: str) -> str:
         return validate_phone(value)

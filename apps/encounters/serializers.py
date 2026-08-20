@@ -9,6 +9,32 @@ from apps.patients.filters import patient_age
 from apps.patients.models import Patient
 
 
+def _sync_related(manager, items, *, is_valid, build_fields):
+    """Diff-upsert-then-delete-orphans, shared by EncounterSerializer's
+    _set_diagnoses/_set_services: an item carrying an ``id`` that matches an
+    existing row is updated in place (preserving created_at/pk/FK
+    references); anything else is created fresh; any row not resubmitted is
+    deleted. ``manager`` is a related manager already scoped to the parent
+    encounter (e.g. ``encounter.diagnoses``), so lookups/creates through it
+    are implicitly scoped without an explicit ``encounter=`` filter.
+    """
+    keep_ids = []
+    for item in items:
+        if not is_valid(item):
+            continue
+        fields = build_fields(item)
+        item_id = item.get("id")
+        obj = manager.filter(pk=item_id).first() if item_id else None
+        if obj is not None:
+            for attr, value in fields.items():
+                setattr(obj, attr, value)
+            obj.save()
+        else:
+            obj = manager.create(**fields)
+        keep_ids.append(obj.pk)
+    manager.exclude(pk__in=keep_ids).delete()
+
+
 class PatientSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
@@ -201,58 +227,30 @@ class EncounterSerializer(CoreModelSerializer):
 
     @staticmethod
     def _set_diagnoses(encounter, diagnoses):
-        keep_ids = []
-        for item in diagnoses:
-            description = (item.get("description") or "").strip()
-            if not description:
-                continue
-            diagnosis_id = item.get("id")
-            if diagnosis_id:
-                diagnosis = EncounterDiagnosis.objects.filter(
-                    pk=diagnosis_id, encounter=encounter
-                ).first()
-                if diagnosis is not None:
-                    diagnosis.description = description
-                    diagnosis.is_primary = item.get("is_primary", False)
-                    diagnosis.save()
-                    keep_ids.append(diagnosis.pk)
-                    continue
-            keep_ids.append(
-                EncounterDiagnosis.objects.create(
-                    encounter=encounter,
-                    description=description,
-                    is_primary=item.get("is_primary", False),
-                ).pk
-            )
-        encounter.diagnoses.exclude(pk__in=keep_ids).delete()
+        _sync_related(
+            encounter.diagnoses,
+            diagnoses,
+            is_valid=lambda item: bool((item.get("description") or "").strip()),
+            build_fields=lambda item: {
+                "description": (item.get("description") or "").strip(),
+                "is_primary": item.get("is_primary", False),
+            },
+        )
 
     @staticmethod
     def _set_services(encounter, services):
-        keep_ids = []
-        for item in services:
-            service = item.get("service")
-            if service is None:
-                continue
-            service_id = item.get("id")
-            fields = {
-                "service": service,
+        _sync_related(
+            encounter.services,
+            services,
+            is_valid=lambda item: item.get("service") is not None,
+            build_fields=lambda item: {
+                "service": item.get("service"),
                 "doctor": item.get("doctor"),
                 "quantity": item.get("quantity", 1),
                 "notes": item.get("notes", ""),
                 "status": item.get("status", EncounterService.Status.PENDING),
-            }
-            if service_id:
-                line = EncounterService.objects.filter(
-                    pk=service_id, encounter=encounter
-                ).first()
-                if line is not None:
-                    for attr, value in fields.items():
-                        setattr(line, attr, value)
-                    line.save()
-                    keep_ids.append(line.pk)
-                    continue
-            keep_ids.append(EncounterService.objects.create(encounter=encounter, **fields).pk)
-        encounter.services.exclude(pk__in=keep_ids).delete()
+            },
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

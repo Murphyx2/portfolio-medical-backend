@@ -168,6 +168,9 @@ def test_doctor_can_only_create_for_self(auth_client, doctor_user, make_user):
 
 
 def test_doctor_only_sees_own_encounters(auth_client, doctor_user, make_user, admin_user):
+    """Centerless encounters (no center set) stay self-only -- there's no
+    shared center to widen visibility through, so this is unaffected by the
+    center-shared scoping added below."""
     from apps.accounts.models import User
 
     own_doctor = _doctor(doctor_user)
@@ -183,6 +186,49 @@ def test_doctor_only_sees_own_encounters(auth_client, doctor_user, make_user, ad
     )
     res = auth_client(doctor_user).get("/api/encounters/")
     assert res.data["count"] == 1
+
+
+def test_doctor_sees_colleagues_encounter_at_shared_center(
+    auth_client, doctor_user, make_user, admin_user
+):
+    """A doctor bound to a center sees another doctor's encounter at that
+    same center (matching Patients/Records center-shared scoping), not just
+    encounters they personally created."""
+    from apps.accounts.models import User
+    from apps.centers.models import DoctorCenterBinding
+
+    center = _center()
+    own_doctor = _doctor(doctor_user)
+    DoctorCenterBinding.objects.create(
+        doctor=own_doctor, center=center, approved=True, approved_by=admin_user
+    )
+    other_user = make_user("doctor2", User.Role.DOCTOR)
+    other_doctor = _doctor(other_user)
+    Encounter.objects.create(
+        service_type=_service_type(), patient=_patient(cedula="00100000033"),
+        doctor=other_doctor, center=center, created_by=admin_user,
+    )
+    res = auth_client(doctor_user).get("/api/encounters/")
+    assert res.data["count"] == 1
+
+
+def test_doctor_without_binding_does_not_see_other_centers_encounter(
+    auth_client, doctor_user, make_user, admin_user
+):
+    """A doctor with no approved binding to a center still sees nothing
+    there, even for another doctor's encounter -- only their own rows."""
+    from apps.accounts.models import User
+
+    _doctor(doctor_user)
+    center = _center()
+    other_user = make_user("doctor2", User.Role.DOCTOR)
+    other_doctor = _doctor(other_user)
+    Encounter.objects.create(
+        service_type=_service_type(), patient=_patient(cedula="00100000044"),
+        doctor=other_doctor, center=center, created_by=admin_user,
+    )
+    res = auth_client(doctor_user).get("/api/encounters/")
+    assert res.data["count"] == 0
 
 
 # ---------------------------------------------------------------------------
