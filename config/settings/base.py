@@ -115,8 +115,12 @@ DATABASES = {
         "HOST": env("POSTGRES_HOST", "db"),
         "PORT": env("POSTGRES_PORT", "5432"),
         # Keep persistent connections alive between requests: saves the TCP +
-        # auth handshake on every list/detail call (5-min max idle).
+        # auth handshake on every list/detail call (60s max idle).
         "CONN_MAX_AGE": 60,
+        # Validate a reused persistent connection before handing it to a
+        # request, so a Postgres restart/idle-drop surfaces as a fresh
+        # reconnect instead of an "server closed the connection" error.
+        "CONN_HEALTH_CHECKS": True,
     }
 }
 
