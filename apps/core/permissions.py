@@ -69,6 +69,14 @@ class CanDeleteAppointments(BasePermission):
             and (request.user.is_admin or request.user.is_doctor)
         )
 
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
+            return False
+        return True
+
 
 class CanManageMedicines(BasePermission):
     """Admins, IT, and receptionists may create/update medicines; delete
@@ -172,7 +180,13 @@ class IsStaffUser(BasePermission):
 
 
 class CanManageAppointments(BasePermission):
-    """Doctors, receptionists, and admins may create/update appointments."""
+    """Doctors, receptionists, and admins may create/update appointments.
+
+    Object-level: a doctor may only write to appointments assigned to them
+    (mirrors CanManageEncounters) -- the center-shared read scope in
+    AppointmentViewSet.get_queryset() must not imply write access to a
+    colleague's appointment at the same center.
+    """
 
     def has_permission(self, request, view):
         return bool(
@@ -184,6 +198,14 @@ class CanManageAppointments(BasePermission):
                 or request.user.is_admin
             )
         )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        if getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id:
+            return False
+        return True
 
 
 class IsCenterManager(BasePermission):

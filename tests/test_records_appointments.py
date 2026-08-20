@@ -186,6 +186,80 @@ def test_doctor_sees_colleagues_appointment_at_shared_center(
     assert res.data["count"] == 1
 
 
+def test_doctor_cannot_write_colleagues_appointment_at_shared_center(
+    auth_client, doctor_user, receptionist_user, admin_user, make_user
+):
+    """A doctor who can now SEE a colleague's appointment at a shared center
+    (test_doctor_sees_colleagues_appointment_at_shared_center) must not be
+    able to PATCH, complete, or DELETE it -- read-scope widening must not
+    imply write-scope widening (mirrors CanManageEncounters)."""
+    from apps.accounts.models import User
+
+    patient = _make_patient(receptionist_user)
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    own_doctor = _make_doctor(doctor_user)
+    DoctorCenterBinding.objects.create(
+        doctor=own_doctor, center=center, approved=True, approved_by=admin_user
+    )
+    other_user = make_user("doctor2", User.Role.DOCTOR)
+    other_doctor = _make_doctor(other_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=other_doctor,
+        center=center,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    client = auth_client(doctor_user)
+
+    res = client.patch(f"/api/appointments/{appt.id}/", {"duration_minutes": 45}, format="json")
+    assert res.status_code == 403
+
+    res = client.post(f"/api/appointments/{appt.id}/complete/")
+    assert res.status_code == 403
+
+    res = client.delete(f"/api/appointments/{appt.id}/")
+    assert res.status_code == 403
+
+    appt.refresh_from_db()
+    assert appt.duration_minutes != 45
+    assert appt.status != Appointment.Status.COMPLETED
+    assert appt.active
+
+
+def test_doctor_can_write_own_appointment_at_shared_center(
+    auth_client, doctor_user, receptionist_user, admin_user
+):
+    """Sanity check: the object-level fix doesn't block a doctor from
+    writing to their own appointment."""
+    patient = _make_patient(receptionist_user)
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    own_doctor = _make_doctor(doctor_user)
+    DoctorCenterBinding.objects.create(
+        doctor=own_doctor, center=center, approved=True, approved_by=admin_user
+    )
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=own_doctor,
+        center=center,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    client = auth_client(doctor_user)
+
+    res = client.patch(f"/api/appointments/{appt.id}/", {"duration_minutes": 45}, format="json")
+    assert res.status_code == 200
+
+    res = client.post(f"/api/appointments/{appt.id}/complete/")
+    assert res.status_code == 200
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.COMPLETED
+
+
 def test_doctor_without_binding_does_not_see_other_centers_appointment(
     auth_client, doctor_user, receptionist_user, admin_user, make_user
 ):
