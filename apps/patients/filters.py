@@ -1,10 +1,9 @@
 from datetime import date
 
 from django.db.models import Q
-from rest_framework.filters import SearchFilter
 
-from apps.core.services import is_masked_role, patient_ids_matching_digits
-from apps.patients.models import Patient
+from apps.core.filters import SearchFilterBase
+from apps.core.services import patient_ids_matching_digits
 
 
 def patient_age(patient_or_birth_date) -> int | None:
@@ -31,31 +30,20 @@ def patient_age(patient_or_birth_date) -> int | None:
     )
 
 
-class PatientSearchFilter(SearchFilter):
+class PatientSearchFilter(SearchFilterBase):
     """Search patients by name (plaintext search_name index) and, when the
     query contains digits, by the cedula/NSS last-4 index -- including the
     guardian's cedula for a minor patient, so front-desk staff can find a
     child by the only ID they may have on hand.
 
-    Multiple terms are AND-ed. Masked roles (IT/CENTER_MANAGER) are exempt so a
-    search cannot act as a PII existence oracle.
+    Masked roles (IT/CENTER_MANAGER) are exempt entirely so a search cannot
+    act as a PII existence oracle.
     """
 
-    def filter_queryset(self, request, queryset, view):
-        terms = self.get_search_terms(request)
-        if not terms:
-            return queryset
-        user = getattr(request, "user", None)
-        if (
-            user
-            and getattr(user, "is_authenticated", False)
-            and is_masked_role(user)
-        ):
-            return queryset
-        q = Q()
-        for term in terms:
-            term_q = Q(search_name__icontains=term)
-            if any(ch.isdigit() for ch in term):
-                term_q |= Q(id__in=patient_ids_matching_digits(term, include_guardian=True))
-            q &= term_q
-        return queryset.filter(q).distinct()
+    bypass_search_for_masked_role = True
+
+    def always_lookups(self, term: str) -> Q:
+        return Q(search_name__icontains=term)
+
+    def digit_lookup(self, term: str) -> Q:
+        return Q(id__in=patient_ids_matching_digits(term, include_guardian=True))
