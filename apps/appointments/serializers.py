@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.appointments.models import Appointment
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import is_own_doctor_relation
 from apps.patients.models import Patient
 from apps.doctors.models import DoctorProfile
 
@@ -56,11 +57,10 @@ class AppointmentSerializer(CoreModelSerializer):
     def validate_doctor(self, value):
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        if user and user.is_authenticated and user.is_doctor:
-            if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
-                raise serializers.ValidationError(
-                    "Doctors may only manage appointments for themselves."
-                )
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Doctors may only manage appointments for themselves."
+            )
         return value
 
     def to_representation(self, instance):
