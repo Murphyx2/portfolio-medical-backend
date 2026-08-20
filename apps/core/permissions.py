@@ -34,6 +34,21 @@ class IsAdminOrIT(BasePermission):
         )
 
 
+class IsAdminOrITOrCenterManager(BasePermission):
+    """Doctor profile writes: ADMIN/IT manage the general fields; a
+    CENTER_MANAGER is admitted at this view-permission layer too, but
+    DoctorProfileSerializer.validate() confines them to the `services` field
+    only -- this class alone doesn't distinguish which fields a request
+    touches (DRF permissions are method-wide, not field-scoped)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_admin or request.user.is_it or request.user.is_center_manager)
+        )
+
+
 class IsDoctor(BasePermission):
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_doctor)

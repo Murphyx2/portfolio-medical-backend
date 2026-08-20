@@ -1,5 +1,6 @@
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
+from apps.services.models import Service, ServiceType
 
 
 def _center_payload(**overrides):
@@ -15,7 +16,6 @@ def _center_payload(**overrides):
 
 def _doctor_payload(**overrides):
     data = {
-        "specialty": "Cardiology",
         "license_number": "LIC-100",
         "contact_phone": "8095550102",
     }
@@ -26,7 +26,6 @@ def _doctor_payload(**overrides):
 def _create_doctor_profile(user):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=f"LIC-{user.id}",
         contact_phone="8095550000",
     )
@@ -169,7 +168,6 @@ def test_doctor_code_uppercased_when_provided(make_user):
     user = make_user("doc-code-3", User.Role.DOCTOR)
     profile = DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number="LIC-code-3",
         contact_phone="8095550000",
         code="dr-custom",
@@ -187,3 +185,102 @@ def test_doctor_code_stays_visible_even_when_license_number_is_masked(
     # explicitly non-PII and must stay legible regardless.
     assert res.data["license_number"] != profile.license_number
     assert res.data["code"] == profile.code
+
+
+def _service(name="Consulta General", **overrides):
+    service_type = ServiceType.objects.create(name=f"Type-{name}")
+    data = {
+        "simon": "1",
+        "name": name,
+        "type": service_type,
+        "co_pago": "0",
+        "privado": "0",
+    }
+    data.update(overrides)
+    return Service.objects.create(**data)
+
+
+def test_admin_can_set_doctor_services(auth_client, admin_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    s1, s2 = _service("Consulta General"), _service("Radiografia")
+    res = auth_client(admin_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [s1.id, s2.id]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    profile.refresh_from_db()
+    assert set(profile.services.values_list("id", flat=True)) == {s1.id, s2.id}
+    assert {s["id"] for s in res.data["services_detail"]} == {s1.id, s2.id}
+
+
+def test_center_manager_can_set_doctor_services(auth_client, center_manager_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    service = _service()
+    res = auth_client(center_manager_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [service.id]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    profile.refresh_from_db()
+    assert list(profile.services.values_list("id", flat=True)) == [service.id]
+
+
+def test_it_cannot_set_doctor_services(auth_client, it_user, admin_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    service = _service()
+    res = auth_client(it_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [service.id]},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    profile.refresh_from_db()
+    assert profile.services.count() == 0
+
+
+def test_doctor_cannot_set_own_services(auth_client, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    service = _service()
+    res = auth_client(doctor_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [service.id]},
+        format="json",
+    )
+    # DOCTOR isn't in IsAdminOrITOrCenterManager at all, so this is blocked
+    # at the view-permission layer, not the serializer's field validator.
+    assert res.status_code == 403, res.data
+
+
+def test_any_staff_role_can_read_doctor_services(auth_client, admin_user, it_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    service = _service()
+    profile.services.add(service)
+    res = auth_client(it_user).get(f"/api/doctors/profiles/{profile.id}/")
+    assert res.status_code == 200, res.data
+    assert res.data["services_detail"] == [{"id": service.id, "name": service.name}]
+
+
+def test_center_manager_cannot_edit_other_doctor_fields(auth_client, center_manager_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    service = _service()
+    res = auth_client(center_manager_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [service.id], "license_number": "LIC-HIJACK"},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    profile.refresh_from_db()
+    assert profile.license_number != "LIC-HIJACK"
+
+
+def test_doctor_services_write_excludes_inactive_service(auth_client, admin_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    inactive = _service("Old Service", active=False)
+    res = auth_client(admin_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"services": [inactive.id]},
+        format="json",
+    )
+    assert res.status_code == 400, res.data

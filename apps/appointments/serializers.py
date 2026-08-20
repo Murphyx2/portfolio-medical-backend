@@ -20,7 +20,7 @@ class DoctorLiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DoctorProfile
-        fields = ["id", "full_name", "specialty"]
+        fields = ["id", "full_name"]
 
 
 class AppointmentSerializer(CoreModelSerializer):

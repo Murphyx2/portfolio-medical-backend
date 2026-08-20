@@ -43,7 +43,6 @@ def _center_payload(**overrides):
 def _doctor_payload(user_id, **overrides):
     data = {
         "user": user_id,
-        "specialty": "Cardiology",
         "license_number": "LIC-PH",
         "contact_phone": "(809) 555-1212",
     }

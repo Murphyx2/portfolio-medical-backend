@@ -148,7 +148,7 @@ def test_doctor_center_binding_approval_invalidates_center_list_cache(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
     profile = DoctorProfile.objects.create(
-        user=doctor_user, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doctor_user, license_number="L1", contact_phone="8095550001"
     )
     client = auth_client(admin_user)
     assert client.get("/api/centers/").data["results"][0]["doctor_count"] == 0

@@ -30,7 +30,6 @@ def _make_patient(**overrides):
 def _make_doctor(user):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=f"LIC-{user.id}",
         contact_phone="8095550000",
     )

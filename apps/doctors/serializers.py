@@ -3,9 +3,12 @@ from rest_framework import serializers
 
 from apps.centers.models import DoctorCenterBinding
 from apps.core.masking import mask_doctor_contact
+from apps.core.permissions import IsAdminOrCenterManager
 from apps.core.serializers import CoreModelSerializer
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
+from apps.services.models import Service
+from apps.services.serializers import ServiceLiteSerializer
 
 
 class DoctorProfileSerializer(CoreModelSerializer):
@@ -19,6 +22,10 @@ class DoctorProfileSerializer(CoreModelSerializer):
     default_room_name = serializers.CharField(
         source="default_room.name", read_only=True, default=None
     )
+    services = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=Service.objects.filter(active=True)
+    )
+    services_detail = ServiceLiteSerializer(source="services", many=True, read_only=True)
 
     class Meta:
         model = DoctorProfile
@@ -29,13 +36,14 @@ class DoctorProfileSerializer(CoreModelSerializer):
             "username",
             "full_name",
             "code",
-            "specialty",
             "license_number",
             "contact_phone",
             "contact_email",
             "bio",
             "default_room",
             "default_room_name",
+            "services",
+            "services_detail",
             "active",
         ]
         read_only_fields = ["code"]
@@ -46,6 +54,40 @@ class DoctorProfileSerializer(CoreModelSerializer):
 
     def validate_contact_phone(self, value: str) -> str:
         return validate_phone(value)
+
+    def validate_services(self, value):
+        # Read access to services_detail is open to any staff role (see
+        # DoctorProfileViewSet's IsStaffUser read gate); only ADMIN/
+        # CENTER_MANAGER may change *which* services a doctor offers. DRF
+        # permission classes are method-wide (a PATCH could touch other
+        # fields too), so this is enforced per-field here, reusing the same
+        # has_permission() the services app itself gates writes with rather
+        # than re-deriving the role check.
+        if "services" in self.initial_data:
+            request = self.context.get("request")
+            if not IsAdminOrCenterManager().has_permission(request, None):
+                raise serializers.ValidationError(
+                    "Only admins or center managers may edit a doctor's services."
+                )
+        return value
+
+    def validate(self, attrs):
+        # The view's write permission (IsAdminOrITOrCenterManager) admits a
+        # CENTER_MANAGER at the request level so they can reach the
+        # `services` field above -- this is what actually confines them to
+        # *only* that field, since they otherwise have none of IT's general
+        # doctor-profile write access.
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        if user and getattr(user, "is_center_manager", False) and not getattr(
+            user, "is_admin", False
+        ):
+            other_fields = set(self.initial_data.keys()) - {"services"}
+            if other_fields:
+                raise serializers.ValidationError(
+                    "Center managers may only edit a doctor's services."
+                )
+        return attrs
 
     def validate_user(self, value):
         if self.instance and self.instance.user_id == value.id:

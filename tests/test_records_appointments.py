@@ -20,7 +20,6 @@ def _make_patient(receptionist_user):
 def _make_doctor(user):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=f"LIC-{user.id}",
         contact_phone="555-0000",
     )

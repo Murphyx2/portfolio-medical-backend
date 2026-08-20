@@ -100,7 +100,7 @@ def apply_masking(
 
 def mask_doctor_contact(data, user, instance):
     """M-03: doctor contact PII is only for admins/IT and the doctor themself;
-    other staff keep name/specialty but see masked contact. Exception:
+    other staff keep name/services but see masked contact. Exception:
     receptionists need unmasked phone/email to coordinate appointments, but
     license_number/bio stay hidden from them too."""
     is_self = bool(user and getattr(instance, "user_id", None) == getattr(user, "id", None))

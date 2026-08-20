@@ -33,7 +33,6 @@ def _make_center(code="C1", name="Center 1"):
 def _make_profile(user, license_number=None):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=license_number or f"LIC-{user.id}",
         contact_phone="555-0000",
     )

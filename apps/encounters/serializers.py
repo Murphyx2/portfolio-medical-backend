@@ -66,7 +66,7 @@ class DoctorLiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DoctorProfile
-        fields = ["id", "code", "full_name", "specialty"]
+        fields = ["id", "code", "full_name"]
 
 
 class EncounterDiagnosisSerializer(serializers.ModelSerializer):
