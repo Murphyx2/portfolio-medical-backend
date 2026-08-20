@@ -1,13 +1,11 @@
 from io import BytesIO
 
-from django.db.models import Q
 from PIL import Image
 from rest_framework import serializers
 
-from apps.centers.models import DoctorCenterBinding
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
-from apps.core.services import sign_media_token, user_accessible_center_ids
+from apps.core.services import can_write_center, sign_media_token
 from apps.patients.models import Patient
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 
@@ -21,7 +19,7 @@ def _validate_patient_scope(context, attrs, user, instance):
     patient = attrs.get("patient") or (instance.patient if instance else None)
     if patient is None:
         return
-    if patient.center_id is not None and patient.center_id not in user_accessible_center_ids(user):
+    if not can_write_center(user, patient.center):
         raise serializers.ValidationError(
             {"patient": "The patient is not in your accessible centers."}
         )
@@ -31,13 +29,10 @@ def _validate_center_scope(context, attrs):
     """Doctors may only write records/logs at a center they're approved for."""
     user = getattr(context.get("request"), "user", None)
     center = attrs.get("center")
-    if user and center is not None and getattr(user, "is_doctor", False):
-        if not DoctorCenterBinding.objects.filter(
-            doctor__user=user, center=center, approved=True
-        ).exists():
-            raise serializers.ValidationError(
-                {"center": "You are not approved to work at this center."}
-            )
+    if user and center is not None and not can_write_center(user, center):
+        raise serializers.ValidationError(
+            {"center": "You are not approved to work at this center."}
+        )
 
 
 class PatientLiteSerializer(serializers.ModelSerializer):
@@ -81,10 +76,7 @@ class RecordImageSerializer(CoreModelSerializer):
         user = getattr(self.context.get("request"), "user", None)
         record = attrs.get("record")
         if user and getattr(user, "is_doctor", False) and record is not None:
-            center_ids = user_accessible_center_ids(user)
-            if not MedicalRecord.objects.filter(pk=record.pk).filter(
-                Q(center_id__in=center_ids) | Q(created_by=user)
-            ).exists():
+            if not (can_write_center(user, record.center) or record.created_by_id == user.id):
                 raise serializers.ValidationError(
                     {"record": "The record is not in your scope."}
                 )

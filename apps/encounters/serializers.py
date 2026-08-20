@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import is_own_doctor_relation, program_belongs_to_ars
 from apps.doctors.models import DoctorProfile
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 from apps.patients.filters import patient_age
@@ -166,11 +167,10 @@ class EncounterSerializer(CoreModelSerializer):
         if value is None:
             return value
         user = self._request_user()
-        if user and user.is_authenticated and getattr(user, "is_doctor", False):
-            if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
-                raise serializers.ValidationError(
-                    "Doctors may only manage encounters for themselves."
-                )
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Doctors may only manage encounters for themselves."
+            )
         return value
 
     def validate(self, attrs):
@@ -178,7 +178,7 @@ class EncounterSerializer(CoreModelSerializer):
         if ars is None and self.instance is not None:
             ars = self.instance.ars
         program = attrs.get("ars_program")
-        if ars is not None and program is not None and program.ars_id != ars.id:
+        if not program_belongs_to_ars(ars, program):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
             )

@@ -15,10 +15,13 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.masking import apply_masking, mask_doctor_contact
 from apps.core.services import (
     can_view_inactive,
+    can_write_center,
     client_ip,
     deactivate_with_cascade,
     is_masked_role,
+    is_own_doctor_relation,
     log_audit,
+    program_belongs_to_ars,
     scope_queryset,
     soft_delete_field_name,
     user_accessible_center_ids,
@@ -770,3 +773,90 @@ def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_use
     request = _search_request(receptionist_user, guardian_cedula)
     qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
     assert qs.count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Write-side scoping predicates (B2: can_write_center, is_own_doctor_relation,
+# program_belongs_to_ars)
+# ---------------------------------------------------------------------------
+
+
+def test_can_write_center_non_doctor_always_true(admin_user, receptionist_user):
+    center = _make_center(code="C-CWC1")
+    assert can_write_center(admin_user, center) is True
+    assert can_write_center(receptionist_user, center) is True
+
+
+def test_can_write_center_none_center_always_true(doctor_user):
+    assert can_write_center(doctor_user, None) is True
+
+
+def test_can_write_center_doctor_approved(doctor_user):
+    doctor = _make_doctor(doctor_user)
+    center = _make_center(code="C-CWC2")
+    DoctorCenterBinding.objects.create(doctor=doctor, center=center, approved=True)
+    assert can_write_center(doctor_user, center) is True
+
+
+def test_can_write_center_doctor_not_approved(doctor_user):
+    doctor = _make_doctor(doctor_user)
+    center = _make_center(code="C-CWC3")
+    DoctorCenterBinding.objects.create(doctor=doctor, center=center, approved=False)
+    assert can_write_center(doctor_user, center) is False
+
+
+def test_can_write_center_doctor_no_binding(doctor_user):
+    center = _make_center(code="C-CWC4")
+    assert can_write_center(doctor_user, center) is False
+
+
+def test_is_own_doctor_relation_non_doctor_always_true(admin_user, doctor_user):
+    other_doctor = _make_doctor(doctor_user)
+    assert is_own_doctor_relation(admin_user, other_doctor) is True
+
+
+def test_is_own_doctor_relation_doctor_own_profile(doctor_user):
+    own = _make_doctor(doctor_user)
+    assert is_own_doctor_relation(doctor_user, own) is True
+
+
+def test_is_own_doctor_relation_doctor_foreign_profile(doctor_user, admin_user):
+    _make_doctor(doctor_user)
+    foreign = DoctorProfile.objects.create(
+        user=admin_user, license_number="LIC-FOREIGN", contact_phone="8095550001"
+    )
+    assert is_own_doctor_relation(doctor_user, foreign) is False
+
+
+def test_is_own_doctor_relation_doctor_without_profile(doctor_user, admin_user):
+    foreign = DoctorProfile.objects.create(
+        user=admin_user, license_number="LIC-NOPROFILE", contact_phone="8095550002"
+    )
+    assert is_own_doctor_relation(doctor_user, foreign) is False
+
+
+def test_program_belongs_to_ars_none_ars_or_program_always_true(db):
+    from apps.ars.models import ARS, ARSProgram
+
+    ars = ARS.objects.create(ars_id="A1", name="Test ARS")
+    program = ARSProgram.objects.create(ars=ars, name="Basic")
+    assert program_belongs_to_ars(None, program) is True
+    assert program_belongs_to_ars(ars, None) is True
+    assert program_belongs_to_ars(None, None) is True
+
+
+def test_program_belongs_to_ars_matching(db):
+    from apps.ars.models import ARS, ARSProgram
+
+    ars = ARS.objects.create(ars_id="A2", name="Matching ARS")
+    program = ARSProgram.objects.create(ars=ars, name="Plus")
+    assert program_belongs_to_ars(ars, program) is True
+
+
+def test_program_belongs_to_ars_mismatched(db):
+    from apps.ars.models import ARS, ARSProgram
+
+    ars_a = ARS.objects.create(ars_id="A3", name="ARS A")
+    ars_b = ARS.objects.create(ars_id="A4", name="ARS B")
+    program = ARSProgram.objects.create(ars=ars_b, name="Plus")
+    assert program_belongs_to_ars(ars_a, program) is False
