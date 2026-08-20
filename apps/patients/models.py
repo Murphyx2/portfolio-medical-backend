@@ -119,14 +119,29 @@ class Patient(TimestampedModel, SoftDeleteModel):
             ),
         ]
 
+    # Single source of truth for "encrypted field -> derived plaintext index
+    # column(s)". Consumed by save() below and by
+    # apps.core.management.commands.reencrypt_pii, so a new helper column
+    # only needs one entry here instead of being wired up in both places
+    # separately (the latter used to be a hard-coded tuple that silently
+    # missed guardian_cedula_hash on key rotation).
+    PII_INDEX_FIELDS = {
+        "cedula": ("cedula_last4", "cedula_hash"),
+        "nss": ("nss_last4", "nss_hash"),
+        "guardian_cedula": ("guardian_cedula_last4", "guardian_cedula_hash"),
+    }
+
+    def _derive_pii_indexes(self):
+        for source, (last4_field, hash_field) in self.PII_INDEX_FIELDS.items():
+            value = getattr(self, source, "") or ""
+            if last4_field:
+                setattr(self, last4_field, value[-4:])
+            if hash_field:
+                setattr(self, hash_field, blind_index_digits(value))
+
     def save(self, *args, **kwargs):
         self.search_name = f"{self.first_name or ''} {self.last_name or ''}".strip().lower()
-        self.cedula_last4 = (self.cedula or "")[-4:]
-        self.nss_last4 = (self.nss or "")[-4:]
-        self.cedula_hash = blind_index_digits(self.cedula)
-        self.nss_hash = blind_index_digits(self.nss)
-        self.guardian_cedula_last4 = (self.guardian_cedula or "")[-4:]
-        self.guardian_cedula_hash = blind_index_digits(self.guardian_cedula)
+        self._derive_pii_indexes()
         super().save(*args, **kwargs)
 
     @property

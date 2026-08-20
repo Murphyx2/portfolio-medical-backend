@@ -114,6 +114,16 @@ class Encounter(TimestampedModel, SoftDeleteModel):
                 errors.append("A primary diagnosis is required to admit this encounter.")
         return errors
 
+    def has_completed_service(self) -> bool:
+        return self.services.filter(status="COMPLETED").exists()
+
+    def is_locked_for_edit(self) -> bool:
+        """True once the encounter (or any of its service lines) has
+        reached a terminal/billed state that must not be rewritten after
+        the fact. Non-admin write access is blocked once this is True (see
+        apps.core.permissions.CanManageEncounters)."""
+        return self.status in ("COMPLETED", "CANCELLED") or self.has_completed_service()
+
     def __str__(self) -> str:
         return self.encounter_number or f"Encounter #{self.pk} ({self.patient.full_name})"
 

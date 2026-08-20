@@ -9,6 +9,7 @@ from rest_framework import serializers
 from apps.core.encryption import blind_index_digits
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import can_write_center, program_belongs_to_ars
 from apps.core.validators import validate_phone
 from apps.patients.filters import patient_age
 from apps.patients.models import Patient
@@ -193,7 +194,7 @@ class PatientSerializer(CoreModelSerializer):
         if ars is None and self.instance is not None:
             ars = self.instance.ars
         program = attrs.get("ars_program")
-        if ars is not None and program is not None and program.ars_id != ars.id:
+        if not program_belongs_to_ars(ars, program):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
             )
@@ -201,13 +202,10 @@ class PatientSerializer(CoreModelSerializer):
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         center = attrs.get("center")
-        if user and getattr(user, "is_doctor", False) and center is not None:
-            from apps.core.services import user_accessible_center_ids
-
-            if center.id not in user_accessible_center_ids(user):
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
+        if user and center is not None and not can_write_center(user, center):
+            raise serializers.ValidationError(
+                {"center": "You are not approved to work at this center."}
+            )
 
         # Cedula/guardian requiredness is only re-checked when the request is
         # a create or actually touches one of the relevant fields -- otherwise

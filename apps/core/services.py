@@ -120,6 +120,33 @@ def scope_queryset(qs, user, *, center_field="center", owner_field=None):
     return qs.filter(q)
 
 
+def can_write_center(user, center) -> bool:
+    """Single home for the "doctor approved for this center" write-side
+    rule -- previously re-encoded with three different query shapes across
+    records/doctors/patients serializers. True for anyone who isn't a
+    doctor, and for a doctor when ``center`` is None (unbound/centerless
+    rows are writable by any doctor)."""
+    if not getattr(user, "is_doctor", False) or center is None:
+        return True
+    return center.id in user_accessible_center_ids(user)
+
+
+def is_own_doctor_relation(user, doctor_profile) -> bool:
+    """True unless ``user`` is a doctor managing a relation (schedule,
+    appointment, encounter) tied to a different DoctorProfile than their
+    own -- previously copy-pasted three times with the same body."""
+    if not getattr(user, "is_doctor", False):
+        return True
+    own = getattr(user, "doctor_profile", None)
+    return own is not None and doctor_profile is not None and doctor_profile.id == own.id
+
+
+def program_belongs_to_ars(ars, program) -> bool:
+    """True unless both an ARS and a program are given and the program
+    belongs to a different ARS."""
+    return ars is None or program is None or program.ars_id == ars.id
+
+
 def log_audit(
     *,
     user,

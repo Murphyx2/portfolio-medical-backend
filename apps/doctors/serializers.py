@@ -1,10 +1,10 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.centers.models import DoctorCenterBinding
 from apps.core.masking import mask_doctor_contact
 from apps.core.permissions import IsAdminOrCenterManager
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import can_write_center, is_own_doctor_relation
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
 from apps.services.models import Service
@@ -127,11 +127,10 @@ class DoctorScheduleSerializer(CoreModelSerializer):
     def validate_doctor(self, value):
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        if user and user.is_authenticated and user.is_doctor:
-            if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
-                raise serializers.ValidationError(
-                    "Doctors may only manage schedules for themselves."
-                )
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Doctors may only manage schedules for themselves."
+            )
         return value
 
     def validate(self, attrs):
@@ -139,11 +138,8 @@ class DoctorScheduleSerializer(CoreModelSerializer):
         user = getattr(request, "user", None) if request else None
         doctor = attrs.get("doctor")
         center = attrs.get("center")
-        if user and user.is_authenticated and user.is_doctor and doctor and center:
-            if not DoctorCenterBinding.objects.filter(
-                doctor=doctor, center=center, approved=True
-            ).exists():
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
+        if user and user.is_authenticated and doctor and center and not can_write_center(user, center):
+            raise serializers.ValidationError(
+                {"center": "You are not approved to work at this center."}
+            )
         return attrs

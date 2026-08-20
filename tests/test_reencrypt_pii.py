@@ -46,3 +46,42 @@ def test_reencrypt_pii_updates_hash_columns_on_key_rotation(db):
 
         # Full-number search still finds the patient immediately after rotation.
         assert patient.id in list(patient_ids_matching_digits("00112345678"))
+
+
+def test_reencrypt_pii_updates_guardian_cedula_hash_on_key_rotation(db):
+    """Regression test for a real pre-existing bug: reencrypt_pii used to
+    hard-code `if name in ("cedula", "nss")`, so guardian_cedula_hash was
+    never recomputed on key rotation and silently went stale. Now it reads
+    from Patient.PII_INDEX_FIELDS (the same mapping Patient.save() uses),
+    so guardian_cedula is covered too."""
+    old_key = Fernet.generate_key().decode()
+    new_key = Fernet.generate_key().decode()
+
+    with override_settings(PII_FIELD_KEY=old_key):
+        encryption._cipher = None
+        patient = Patient.objects.create(
+            first_name="Kid",
+            last_name="One",
+            cedula="",
+            has_guardian=True,
+            guardian_cedula="00198765432",
+            guardian_first_name="Parent",
+            guardian_last_name="One",
+        )
+        old_guardian_hash = patient.guardian_cedula_hash
+        assert old_guardian_hash == blind_index_digits("00198765432")
+
+    with override_settings(PII_FIELD_KEY=new_key):
+        encryption._cipher = None
+        call_command("reencrypt_pii", old_key=old_key)
+
+        patient.refresh_from_db()
+        new_guardian_hash = blind_index_digits("00198765432")
+
+        assert patient.guardian_cedula_hash == new_guardian_hash
+        assert new_guardian_hash != old_guardian_hash
+
+        # Guardian-cedula search still finds the patient immediately after rotation.
+        assert patient.id in list(
+            patient_ids_matching_digits("00198765432", include_guardian=True)
+        )
