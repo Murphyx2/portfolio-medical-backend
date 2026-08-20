@@ -15,7 +15,6 @@ from apps.doctors.models import DoctorProfile, DoctorSchedule
 def _make_doctor(user, license_number=None):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=license_number or f"LIC-{user.id}",
         contact_phone="555-0000",
     )

@@ -8,6 +8,7 @@ from apps.core.mixins import AuditMixin
 from apps.core.permissions import (
     CanViewInactive,
     IsAdminOrIT,
+    IsAdminOrITOrCenterManager,
     IsDoctor,
     IsStaffUser,
 )
@@ -16,17 +17,20 @@ from apps.doctors.serializers import DoctorProfileSerializer, DoctorScheduleSeri
 
 
 class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = DoctorProfile.all_objects.select_related("user", "default_room").all()
+    queryset = (
+        DoctorProfile.all_objects.select_related("user", "default_room")
+        .prefetch_related("services")
+        .all()
+    )
     serializer_class = DoctorProfileSerializer
     permission_classes = [IsStaffUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["specialty", "user"]
+    filterset_fields = ["user", "services"]
     search_fields = [
         "code",
         "user__first_name",
         "user__last_name",
         "license_number",
-        "specialty",
         "contact_email",
         "contact_phone",
     ]
@@ -34,7 +38,6 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
         "code",
         "user__last_name",
         "user__first_name",
-        "specialty",
         "license_number",
         "contact_email",
         "contact_phone",
@@ -42,7 +45,11 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrIT]
+            # Widened to admit CENTER_MANAGER alongside ADMIN/IT -- this
+            # class is method-wide, so DoctorProfileSerializer.validate()
+            # is what actually confines a CENTER_MANAGER to the `services`
+            # field (see its docstring).
+            self.permission_classes = [IsAdminOrITOrCenterManager]
         return super().get_permissions()
 
     def get_queryset(self):

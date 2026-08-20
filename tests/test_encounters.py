@@ -61,7 +61,6 @@ def _patient(**overrides):
 
 def _doctor(user, **overrides):
     data = {
-        "specialty": "Cardiology",
         "license_number": f"LIC-{user.id}",
         "contact_phone": "8095550000",
     }

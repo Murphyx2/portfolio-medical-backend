@@ -43,7 +43,6 @@ def _center(code="C1"):
 def _doctor_profile(user):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number="LIC-123",
         contact_phone="8095550000",
         contact_email="doc@example.com",
@@ -159,7 +158,7 @@ def _doctor_detail(auth_client, user, profile):
 def test_receptionist_sees_unmasked_contact_but_masked_license(auth_client, receptionist_user, doctor_user):
     prof = _doctor_profile(doctor_user)
     data = _doctor_detail(auth_client, receptionist_user, prof)
-    assert data["specialty"] == "Cardiology"
+    assert data["full_name"]
     assert data["contact_phone"] == "8095550000"
     assert data["contact_email"] == "doc@example.com"
     assert data["license_number"] != "LIC-123" and "••••" in data["license_number"]

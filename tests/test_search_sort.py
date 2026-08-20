@@ -302,7 +302,6 @@ def test_centers_ordering_by_doctor_count(auth_client, admin_user, db, doctor_us
     )
     prof = DoctorProfile.objects.create(
         user=doctor_user,
-        specialty="GP",
         license_number="LIC1",
         contact_phone="8095550000",
     )
@@ -317,13 +316,13 @@ def test_doctors_search_and_ordering(auth_client, admin_user, db, make_user):
     u1 = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     u2 = make_user("docB", "DOCTOR", first_name="Abe", last_name="B")
     DoctorProfile.objects.create(
-        user=u1, specialty="Cardiologia", license_number="L1", contact_phone="8095550001"
+        user=u1, license_number="L1-CARDIO", contact_phone="8095550001"
     )
     DoctorProfile.objects.create(
-        user=u2, specialty="Pediatria", license_number="L2", contact_phone="8095550002"
+        user=u2, license_number="L2-PEDI", contact_phone="8095550002"
     )
     res = auth_client(admin_user).get("/api/doctors/profiles/?search=cardio")
-    assert {r["specialty"] for r in res.data["results"]} == {"Cardiologia"}
+    assert {r["license_number"] for r in res.data["results"]} == {"L1-CARDIO"}
     res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-user__last_name")
     assert res.data["results"][0]["full_name"] == "Abe B"
 
@@ -351,7 +350,7 @@ def test_appointments_search_and_ordering(auth_client, admin_user, db, make_user
 
     doc = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     prof = DoctorProfile.objects.create(
-        user=doc, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doc, license_number="L1", contact_phone="8095550001"
     )
     p1 = _patient(first_name="Ana", last_name="Perez", cedula="11100000003", nss="")
     p2 = _patient(first_name="Luis", last_name="Perez", cedula="11100000004", nss="")

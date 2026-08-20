@@ -295,7 +295,7 @@ def test_encounters_search_does_not_match_guardian_cedula(
     )
     patient = Patient.objects.get(pk=create.data["id"])
     doctor = DoctorProfile.objects.create(
-        user=admin_user, specialty="Pediatrics", license_number="LIC-GCS", contact_phone="1",
+        user=admin_user, license_number="LIC-GCS", contact_phone="1",
     )
     service_type = ServiceType.objects.get_or_create(name="Consulta General")[0]
     Encounter.objects.create(

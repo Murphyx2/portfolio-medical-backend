@@ -208,7 +208,7 @@ def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
     profile = DoctorProfile.objects.create(
-        user=doctor_user, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doctor_user, license_number="L1", contact_phone="8095550001"
     )
     DoctorCenterBinding.objects.create(
         doctor=profile, center=center, approved=True, approved_by=doctor_user
