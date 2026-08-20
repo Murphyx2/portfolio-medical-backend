@@ -13,6 +13,7 @@ from rest_framework.test import APIRequestFactory
 
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.masking import apply_masking, mask_doctor_contact
+from apps.core.permissions import is_owner_doctor
 from apps.core.services import (
     can_view_inactive,
     client_ip,
@@ -770,3 +771,82 @@ def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_use
     request = _search_request(receptionist_user, guardian_cedula)
     qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
     assert qs.count() == 0
+
+
+# ---------------------------------------------------------------------------
+# is_owner_doctor (B4)
+# ---------------------------------------------------------------------------
+
+
+def test_is_owner_doctor_non_doctor_always_true(admin_user, doctor_user):
+    doctor = _make_doctor(doctor_user)
+    patient = _make_patient()
+    appointment = _make_encounter(patient, doctor_user, doctor=doctor)
+    assert is_owner_doctor(admin_user, appointment) is True
+
+
+def test_is_owner_doctor_owning_doctor_true(doctor_user):
+    doctor = _make_doctor(doctor_user)
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user, doctor=doctor)
+    assert is_owner_doctor(doctor_user, encounter) is True
+
+
+def test_is_owner_doctor_foreign_doctor_false(doctor_user, admin_user):
+    other_user_doctor = _make_doctor(doctor_user)
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user, doctor=other_user_doctor)
+
+    from apps.accounts.models import User
+
+    foreign_user = User.objects.create_user(
+        username="foreign_doctor", password="pass12345", role=User.Role.DOCTOR
+    )
+    assert is_owner_doctor(foreign_user, encounter) is False
+
+
+# ---------------------------------------------------------------------------
+# Encounter.has_completed_service / is_locked_for_edit (B4)
+# ---------------------------------------------------------------------------
+
+
+def test_encounter_not_locked_when_draft_and_no_completed_service(doctor_user):
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user)
+    assert encounter.has_completed_service() is False
+    assert encounter.is_locked_for_edit() is False
+
+
+@pytest.mark.parametrize("status", ["COMPLETED", "CANCELLED"])
+def test_encounter_locked_when_terminal_status(doctor_user, status):
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user, status=status)
+    assert encounter.is_locked_for_edit() is True
+
+
+def test_encounter_locked_when_has_completed_service(doctor_user):
+    from apps.services.models import Service
+
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user, status="ACTIVE")
+    service = Service.objects.create(
+        simon="100001", name="Lab test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, status="COMPLETED")
+
+    assert encounter.has_completed_service() is True
+    assert encounter.is_locked_for_edit() is True
+
+
+def test_encounter_not_locked_when_service_pending(doctor_user):
+    from apps.services.models import Service
+
+    patient = _make_patient()
+    encounter = _make_encounter(patient, doctor_user, status="ACTIVE")
+    service = Service.objects.create(
+        simon="100002", name="Lab test 2", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, status="PENDING")
+
+    assert encounter.has_completed_service() is False
+    assert encounter.is_locked_for_edit() is False
