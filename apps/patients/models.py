@@ -1,8 +1,34 @@
+from datetime import date
+
 from django.db import models
 
 from apps.core.encryption import blind_index_digits
 from apps.core.fields import EncryptedCharField, EncryptedTextField
 from apps.core.models import SoftDeleteModel, TimestampedModel
+
+
+def patient_age(patient_or_birth_date) -> int | None:
+    """Age in years from a birth date; None when absent/unparseable.
+
+    Accepts either a `Patient` instance (reads its `birth_date`) or a raw
+    birth-date value (str/date) directly, so callers validating incoming
+    request data (which isn't a saved instance yet) can reuse the same
+    arithmetic as callers reading an existing row.
+    """
+    bd = getattr(patient_or_birth_date, "birth_date", patient_or_birth_date)
+    if not bd:
+        return None
+    if isinstance(bd, str):
+        try:
+            bd = date.fromisoformat(bd)
+        except ValueError:
+            return None
+    today = date.today()
+    return (
+        today.year
+        - bd.year
+        - ((today.month, today.day) < (bd.month, bd.day))
+    )
 
 
 class Patient(TimestampedModel, SoftDeleteModel):

@@ -4,9 +4,9 @@ from PIL import Image
 from rest_framework import serializers
 
 from apps.core.masking import apply_masking
-from apps.core.serializers import CoreModelSerializer
+from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import can_write_center, sign_media_token
-from apps.patients.models import Patient
+from apps.patients.serializers import PatientSummarySerializer
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
@@ -35,11 +35,11 @@ def _validate_center_scope(context, attrs):
         )
 
 
-class PatientLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = Patient
+class PatientLiteSerializer(PatientSummarySerializer):
+    # Masked subset (see MedicalRecordSerializer/ConsultationLogSerializer's
+    # apply_masking(masked_nested=(("patient_info", (...)),)) below):
+    # full_name, cedula, nss.
+    class Meta(PatientSummarySerializer.Meta):
         fields = ["id", "full_name", "gender", "cedula", "nss"]
 
 
@@ -120,7 +120,7 @@ class MedicalRecordSerializer(CoreModelSerializer):
         read_only_fields = ["id", "created_by", "date"]
 
     def get_created_by_name(self, obj):
-        return obj.created_by.get_full_name() or obj.created_by.username
+        return full_name_or_username(obj.created_by)
 
     def validate(self, attrs):
         user = getattr(self.context.get("request"), "user", None)
@@ -165,7 +165,7 @@ class ConsultationLogSerializer(CoreModelSerializer):
         read_only_fields = ["id", "doctor", "date"]
 
     def get_doctor_name(self, obj):
-        return obj.doctor.get_full_name() or obj.doctor.username
+        return full_name_or_username(obj.doctor)
 
     def validate(self, attrs):
         user = getattr(self.context.get("request"), "user", None)

@@ -11,8 +11,7 @@ from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
 from apps.core.services import can_write_center, program_belongs_to_ars
 from apps.core.validators import validate_phone
-from apps.patients.filters import patient_age
-from apps.patients.models import Patient
+from apps.patients.models import Patient, patient_age
 
 # validate() only re-checks cedula/guardian requiredness when one of these
 # keys is present in the incoming attrs (or on create) -- otherwise a PATCH
@@ -54,6 +53,46 @@ def _normalize_nss_digits(value: str, *, field_label: str = "NSS") -> str:
     if len(normalized) > 11:
         raise serializers.ValidationError(f"{field_label} must be at most 11 digits.")
     return normalized
+
+
+class PatientSummarySerializer(serializers.ModelSerializer):
+    """Canonical base for cross-app "lite"/"summary" patient nesting
+    (records/appointments/encounters each used to declare their own
+    independent copy with a different field subset). Consumers subclass and
+    override ``Meta.fields`` to their own subset -- this centralizes the
+    ``full_name``/``age`` declared fields and the ``patient_age`` call so a
+    new field only needs `.get_age`/normalization logic written once, while
+    each consumer keeps exactly the (narrower) field set it exposed before
+    (deliberately not widened to the full union here: that would expose more
+    PHI per response than each endpoint needs, even though masking still
+    applies to what's returned -- see apply_masking() call sites in each
+    subclass's owning serializer for the masked subset of *its* fields).
+    """
+
+    full_name = serializers.ReadOnlyField()
+    age = serializers.SerializerMethodField()
+    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
+
+    class Meta:
+        model = Patient
+        fields = [
+            "id",
+            "full_name",
+            "age",
+            "gender",
+            "cedula",
+            "nss",
+            "allergies",
+            "critical_conditions",
+            "ars",
+            "ars_name",
+            "ars_program",
+            "has_guardian",
+            "guardian_cedula",
+        ]
+
+    def get_age(self, obj) -> int | None:
+        return patient_age(obj)
 
 
 class PatientSerializer(CoreModelSerializer):
