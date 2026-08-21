@@ -2,12 +2,11 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.masking import apply_masking
-from apps.core.serializers import CoreModelSerializer
+from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import is_own_doctor_relation, program_belongs_to_ars
-from apps.doctors.models import DoctorProfile
+from apps.doctors.serializers import DoctorLiteSerializer
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
-from apps.patients.filters import patient_age
-from apps.patients.models import Patient
+from apps.patients.serializers import PatientSummarySerializer as _PatientSummaryBase
 
 
 def _sync_related(manager, items, *, is_valid, build_fields):
@@ -36,13 +35,11 @@ def _sync_related(manager, items, *, is_valid, build_fields):
     manager.exclude(pk__in=keep_ids).delete()
 
 
-class PatientSummarySerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-    age = serializers.SerializerMethodField()
-    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
-
-    class Meta:
-        model = Patient
+class PatientSummarySerializer(_PatientSummaryBase):
+    # Masked subset (see EncounterSerializer's apply_masking(masked_nested=,
+    # masked_nested_nulls=) below): full_name, cedula, allergies,
+    # critical_conditions, guardian_cedula, and age nulled.
+    class Meta(_PatientSummaryBase.Meta):
         fields = [
             "id",
             "full_name",
@@ -57,17 +54,6 @@ class PatientSummarySerializer(serializers.ModelSerializer):
             "has_guardian",
             "guardian_cedula",
         ]
-
-    def get_age(self, obj) -> int | None:
-        return patient_age(obj)
-
-
-class DoctorLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = DoctorProfile
-        fields = ["id", "code", "full_name"]
 
 
 class EncounterDiagnosisSerializer(serializers.ModelSerializer):
@@ -161,7 +147,7 @@ class EncounterSerializer(CoreModelSerializer):
         ]
 
     def get_created_by_name(self, obj):
-        return obj.created_by.get_full_name() or obj.created_by.username
+        return full_name_or_username(obj.created_by)
 
     def validate_doctor(self, value):
         if value is None:

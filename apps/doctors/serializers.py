@@ -11,6 +11,20 @@ from apps.services.models import Service
 from apps.services.serializers import ServiceLiteSerializer
 
 
+class DoctorLiteSerializer(serializers.ModelSerializer):
+    """Canonical base for cross-app "lite" doctor nesting (appointments and
+    encounters each used to declare their own independent copy). Consumers
+    subclass and override ``Meta.fields`` to their own subset, same pattern
+    as ``apps.patients.serializers.PatientSummarySerializer`` and the
+    ``ServiceLiteSerializer`` convention this mirrors."""
+
+    full_name = serializers.ReadOnlyField()
+
+    class Meta:
+        model = DoctorProfile
+        fields = ["id", "code", "full_name"]
+
+
 class DoctorProfileSerializer(CoreModelSerializer):
     full_name = serializers.CharField(read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)

@@ -2,25 +2,21 @@ from rest_framework import serializers
 
 from apps.appointments.models import Appointment
 from apps.core.masking import apply_masking
-from apps.core.serializers import CoreModelSerializer
+from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import is_own_doctor_relation
-from apps.patients.models import Patient
-from apps.doctors.models import DoctorProfile
+from apps.doctors.serializers import DoctorLiteSerializer as _DoctorLiteBase
+from apps.patients.serializers import PatientSummarySerializer
 
 
-class PatientLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = Patient
+class PatientLiteSerializer(PatientSummarySerializer):
+    # Masked subset (see AppointmentSerializer's
+    # apply_masking(masked_nested=(("patient_info", (...)),)) below): full_name.
+    class Meta(PatientSummarySerializer.Meta):
         fields = ["id", "full_name", "gender"]
 
 
-class DoctorLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = DoctorProfile
+class DoctorLiteSerializer(_DoctorLiteBase):
+    class Meta(_DoctorLiteBase.Meta):
         fields = ["id", "full_name"]
 
 
@@ -52,7 +48,7 @@ class AppointmentSerializer(CoreModelSerializer):
         read_only_fields = ["id", "created_by", "created_at"]
 
     def get_created_by_name(self, obj):
-        return obj.created_by.get_full_name() or obj.created_by.username
+        return full_name_or_username(obj.created_by)
 
     def validate_doctor(self, value):
         request = self.context.get("request")

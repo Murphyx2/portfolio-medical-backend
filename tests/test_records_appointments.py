@@ -85,6 +85,36 @@ def test_doctor_reads_full_clinical(auth_client, doctor_user, receptionist_user)
     assert result["diagnosis"] == "Hypertension"
 
 
+def test_record_patient_info_masked_for_it_role(auth_client, it_user, doctor_user, receptionist_user):
+    """B6 regression guard: MedicalRecordSerializer's shared PatientLiteSerializer
+    (apps/records/serializers.py) still masks full_name/cedula/nss on the nested
+    patient_info for IT, per its own apply_masking(masked_nested=...) spec."""
+    patient = _make_patient(receptionist_user)
+    patient.cedula = "00112345678"
+    patient.save()
+    _make_record(patient, doctor_user)
+
+    res = auth_client(it_user).get("/api/medical-records/")
+    assert res.status_code == 200
+    patient_info = res.data["results"][0]["patient_info"]
+    assert patient_info["full_name"] != patient.full_name
+    assert patient_info["cedula"] != "00112345678"
+    assert patient_info["gender"] == "FEMALE"  # not masked -- outside masked_nested
+
+
+def test_record_patient_info_full_for_doctor(auth_client, doctor_user, receptionist_user):
+    patient = _make_patient(receptionist_user)
+    patient.cedula = "00112345678"
+    patient.save()
+    _make_record(patient, doctor_user)
+
+    res = auth_client(doctor_user).get("/api/medical-records/")
+    assert res.status_code == 200
+    patient_info = res.data["results"][0]["patient_info"]
+    assert patient_info["full_name"] == patient.full_name
+    assert patient_info["cedula"] == "00112345678"
+
+
 def test_consultation_log_creation(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
     res = auth_client(doctor_user).post(
@@ -154,6 +184,27 @@ def test_nurse_cannot_create_appointment(auth_client, nurse_user, receptionist_u
         format="json",
     )
     assert res.status_code in (401, 403)
+
+
+def test_appointment_patient_info_masked_for_it_role(
+    auth_client, it_user, receptionist_user, doctor_user
+):
+    """B6 regression guard: AppointmentSerializer's shared PatientLiteSerializer
+    still masks only full_name on the nested patient_info for IT (its own
+    narrower masked_nested spec, distinct from records' full_name/cedula/nss)."""
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(it_user).get("/api/appointments/")
+    assert res.status_code == 200
+    patient_info = res.data["results"][0]["patient_info"]
+    assert patient_info["full_name"] != patient.full_name
+    assert patient_info["gender"] == "FEMALE"  # not masked -- outside masked_nested
 
 
 def test_doctor_sees_colleagues_appointment_at_shared_center(

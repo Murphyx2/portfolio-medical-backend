@@ -31,3 +31,11 @@ class CoreModelSerializer(serializers.ModelSerializer):
         if "active" in fields and not can_view_inactive(self._request_user()):
             fields["active"].read_only = True
         return fields
+
+
+def full_name_or_username(user) -> str:
+    """Shared body for the ``get_created_by_name``/``get_doctor_name``
+    SerializerMethodFields repeated across records/appointments/encounters
+    serializers -- always masked (``masked_fields=("created_by_name",)`` or
+    similarly named) wherever it appears."""
+    return user.get_full_name() or user.username
