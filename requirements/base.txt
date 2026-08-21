@@ -10,3 +10,4 @@ cryptography>=49.0.0,<51.0
 python-dotenv>=1.0,<2.0
 gunicorn>=23.0,<24.0
 Pillow>=12.3.0,<13.0
+whitenoise>=6.7,<7.0
