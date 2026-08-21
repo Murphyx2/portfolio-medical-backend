@@ -196,6 +196,28 @@ class CanManageAppointments(RoleUnionPermission):
         return is_owner_doctor(request.user, obj)
 
 
+class CanCancelAppointment(RoleUnionPermission):
+    """Only receptionists or admins may cancel an appointment. Was an inline
+    `self.permission_denied(...)` check inside AppointmentViewSet.cancel()
+    (B7) -- moved to a permission class so it's checked at dispatch() time
+    like every other write gate, instead of after get_object()."""
+
+    allowed_roles = (User.Role.RECEPTIONIST, User.Role.ADMIN)
+
+
+class CanCompleteAppointment(RoleUnionPermission):
+    """Only doctors or admins may complete an appointment; a doctor may only
+    complete their own (mirrors CanManageAppointments' object-level check --
+    was previously enforced there since AppointmentViewSet.complete() ran
+    through write_permission_classes=[CanManageAppointments] on top of its
+    own inline role check)."""
+
+    allowed_roles = (User.Role.DOCTOR, User.Role.ADMIN)
+
+    def has_object_permission(self, request, view, obj):
+        return is_owner_doctor(request.user, obj)
+
+
 class IsCenterManager(RoleUnionPermission):
     allowed_roles = (User.Role.CENTER_MANAGER,)
 

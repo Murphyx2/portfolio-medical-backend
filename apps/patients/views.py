@@ -11,30 +11,6 @@ from apps.patients.models import Patient
 from apps.patients.serializers import PatientSerializer
 
 
-def _create_initial_record(patient: Patient, user) -> None:
-    """Every new patient gets a placeholder medical record right away, so
-    Records.tsx always has something to open for them (see the ?patient=
-    auto-open flow from Encounters.tsx) instead of an empty history. Left
-    for a doctor/nurse to fill in during the patient's first real visit --
-    no clinical fields are guessed here, only the safety-relevant summary
-    already captured on the patient form.
-    """
-    from apps.records.models import MedicalRecord
-
-    notes_parts = []
-    if patient.allergies:
-        notes_parts.append(f"Alergias: {patient.allergies}")
-    if patient.critical_conditions:
-        notes_parts.append(f"Condiciones críticas: {patient.critical_conditions}")
-    MedicalRecord.objects.create(
-        patient=patient,
-        created_by=user,
-        center=patient.center,
-        title="Registro inicial",
-        notes="\n".join(notes_parts),
-    )
-
-
 class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Patient.all_objects.select_related("ars", "ars_program", "center").all()
     serializer_class = PatientSerializer
@@ -52,7 +28,11 @@ class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
-        _create_initial_record(serializer.instance, self.request.user)
+        from apps.records.services import create_initial_record
+
+        create_initial_record(
+            serializer.instance, self.request.user, request=self.request
+        )
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -60,7 +40,12 @@ class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         if is_masked_role(user):
             # IT/CENTER_MANAGER must not be able to confirm whether a specific
             # name is a patient (plaintext search_name would defeat display
-            # masking and act as a PII-existence oracle).
+            # masking and act as a PII-existence oracle). Setting this as an
+            # *instance* attribute (not overriding a method) is the pattern
+            # DjangoFilterBackend actually expects for a per-request field
+            # list -- it reads `getattr(view, "filterset_fields", None)"
+            # directly (see get_filterset_class()), with no method hook to
+            # override instead.
             self.filterset_fields = ["gender", "ars", "center"]
         if getattr(user, "is_doctor", False):
             from apps.records.models import MedicalRecord
