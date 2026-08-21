@@ -1,8 +1,6 @@
 from django.db.models import Count
-from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
@@ -11,22 +9,17 @@ from apps.centers.serializers import (
     DoctorCenterBindingSerializer,
     MedicalCenterSerializer,
 )
-from apps.core.caching import CachedListViewMixin
-from apps.core.mixins import AuditMixin, SwapPermissionsMixin
+from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdmin, IsAdminOrIT, IsStaffUser
+from apps.core.viewsets import ReferenceDataViewSet
 
 
-class MedicalCenterViewSet(
-    SwapPermissionsMixin, AuditMixin, CachedListViewMixin, viewsets.ModelViewSet
-):
-    cache_model = "medicalcenter"
+class MedicalCenterViewSet(ReferenceDataViewSet):
     queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
-    permission_classes = [IsStaffUser]
     write_permission_classes = [IsAdminOrIT]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
