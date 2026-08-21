@@ -1,8 +1,21 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
+
+
+class EncounterAdmitError(Exception):
+    """Raised by Encounter.admit() on any failure to transition DRAFT ->
+    ACTIVE. ``detail`` mirrors what the view's ValidationError response
+    body carries (a string or list of strings); ``code`` is set only for
+    the same-day-active-conflict case (ACTIVE_ENCOUNTER_EXISTS), matching
+    the response shape the frontend and tests already expect."""
+
+    def __init__(self, detail, *, code: str | None = None):
+        self.detail = detail
+        self.code = code
+        super().__init__(detail if isinstance(detail, str) else str(detail))
 
 
 class Encounter(TimestampedModel, SoftDeleteModel):
@@ -113,6 +126,50 @@ class Encounter(TimestampedModel, SoftDeleteModel):
             if not self.diagnoses.filter(is_primary=True).exists():
                 errors.append("A primary diagnosis is required to admit this encounter.")
         return errors
+
+    def admit(self, *, override_conflict: bool = False) -> None:
+        """Transition DRAFT -> ACTIVE: validates readiness, checks for a
+        same-day active-encounter conflict (bypassable via
+        ``override_conflict``), assigns the encounter number, and persists
+        the transition -- all atomically. Raises EncounterAdmitError on any
+        failure; the view translates that into the ValidationError response
+        shape callers already depend on (``{"detail": ...}`` or
+        ``{"code": "ACTIVE_ENCOUNTER_EXISTS", "detail": ...}``).
+
+        Uses ``Encounter.all_objects`` for the conflict query (not the
+        soft-delete-default manager) to match the ViewSet's own queryset
+        semantics -- a soft-deleted ACTIVE encounter should still count as
+        a same-day conflict, same as it still counts everywhere else the
+        ViewSet reads/writes this model.
+        """
+        if self.status != Encounter.Status.DRAFT:
+            raise EncounterAdmitError("Only a draft encounter can be admitted.")
+        errors = self.ready_for_active()
+        if errors:
+            raise EncounterAdmitError(errors)
+
+        today = timezone.localdate()
+        conflict = (
+            Encounter.all_objects.filter(
+                patient=self.patient,
+                status=Encounter.Status.ACTIVE,
+                admitted_at__date=today,
+            )
+            .exclude(pk=self.pk)
+            .exists()
+        )
+        if conflict and not override_conflict:
+            raise EncounterAdmitError(
+                "This patient already has an active encounter today.",
+                code="ACTIVE_ENCOUNTER_EXISTS",
+            )
+
+        with transaction.atomic():
+            self.status = Encounter.Status.ACTIVE
+            self.admitted_at = timezone.now()
+            self.save(update_fields=["status", "admitted_at"])
+            generate_encounter_number(self, today=today)
+        self.refresh_from_db()
 
     def has_completed_service(self) -> bool:
         return self.services.filter(status="COMPLETED").exists()

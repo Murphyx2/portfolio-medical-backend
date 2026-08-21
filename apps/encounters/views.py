@@ -8,9 +8,9 @@ from rest_framework.response import Response
 
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
-from apps.core.services import client_ip, log_audit, scope_queryset
+from apps.core.services import scope_queryset
 from apps.encounters.filters import EncounterSearchFilter
-from apps.encounters.models import Encounter, generate_encounter_number
+from apps.encounters.models import Encounter, EncounterAdmitError
 from apps.encounters.serializers import EncounterSerializer
 
 
@@ -47,50 +47,19 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        instance = serializer.save()
-        log_audit(
-            user=self.request.user,
-            action="CREATE",
-            target=instance,
-            ip_address=client_ip(self.request),
-        )
+        super().perform_create(serializer)
 
     @action(detail=True, methods=["post"])
     def admit(self, request, pk=None):
         encounter = self.get_object()
-        if encounter.status != Encounter.Status.DRAFT:
-            raise serializers.ValidationError(
-                {"detail": "Only a draft encounter can be admitted."}
-            )
-        errors = encounter.ready_for_active()
-        if errors:
-            raise serializers.ValidationError({"detail": errors})
-
         override = bool(request.data.get("override_conflict"))
-        today = timezone.localdate()
-        conflict = (
-            Encounter.objects.filter(
-                patient=encounter.patient,
-                status=Encounter.Status.ACTIVE,
-                admitted_at__date=today,
-            )
-            .exclude(pk=encounter.pk)
-            .exists()
-        )
-        if conflict and not override:
-            raise serializers.ValidationError(
-                {
-                    "code": "ACTIVE_ENCOUNTER_EXISTS",
-                    "detail": "This patient already has an active encounter today.",
-                }
-            )
-
-        with transaction.atomic():
-            encounter.status = Encounter.Status.ACTIVE
-            encounter.admitted_at = timezone.now()
-            encounter.save(update_fields=["status", "admitted_at"])
-            generate_encounter_number(encounter, today=today)
-        encounter.refresh_from_db()
+        try:
+            encounter.admit(override_conflict=override)
+        except EncounterAdmitError as exc:
+            payload = {"detail": exc.detail}
+            if exc.code:
+                payload["code"] = exc.code
+            raise serializers.ValidationError(payload)
         self.log_action(
             encounter,
             "UPDATE",
