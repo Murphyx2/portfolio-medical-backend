@@ -1,5 +1,6 @@
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
+from apps.rooms.models import Room, RoomType
 from apps.services.models import Service, ServiceType
 
 
@@ -284,3 +285,81 @@ def test_doctor_services_write_excludes_inactive_service(auth_client, admin_user
         format="json",
     )
     assert res.status_code == 400, res.data
+
+
+def _room(name="Room 1", **overrides):
+    code = name.upper().replace(" ", "-")
+    center = overrides.pop("center", None) or MedicalCenter.objects.create(
+        **_center_payload(code=f"C-{code}")
+    )
+    room_type = RoomType.objects.create(name=f"Type-{name}")
+    data = {
+        "code": code,
+        "name": name,
+        "room_type": room_type,
+        "center": center,
+    }
+    data.update(overrides)
+    return Room.objects.create(**data)
+
+
+def test_admin_can_set_doctor_rooms(auth_client, admin_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    r1, r2 = _room("Room A"), _room("Room B")
+    res = auth_client(admin_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"rooms": [r1.id, r2.id]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    profile.refresh_from_db()
+    assert set(profile.rooms.values_list("id", flat=True)) == {r1.id, r2.id}
+    assert {r["id"] for r in res.data["rooms_detail"]} == {r1.id, r2.id}
+
+
+def test_center_manager_can_set_doctor_rooms(auth_client, center_manager_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    room = _room()
+    res = auth_client(center_manager_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"rooms": [room.id]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    profile.refresh_from_db()
+    assert list(profile.rooms.values_list("id", flat=True)) == [room.id]
+
+
+def test_it_cannot_set_doctor_rooms(auth_client, it_user, admin_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    room = _room()
+    res = auth_client(it_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"rooms": [room.id]},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    profile.refresh_from_db()
+    assert profile.rooms.count() == 0
+
+
+def test_any_staff_role_can_read_doctor_rooms(auth_client, admin_user, it_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    room = _room()
+    profile.rooms.add(room)
+    res = auth_client(it_user).get(f"/api/doctors/profiles/{profile.id}/")
+    assert res.status_code == 200, res.data
+    assert res.data["rooms_detail"] == [{"id": room.id, "name": room.name}]
+
+
+def test_center_manager_cannot_edit_other_doctor_fields_via_rooms(auth_client, center_manager_user, doctor_user):
+    profile = _create_doctor_profile(doctor_user)
+    room = _room()
+    res = auth_client(center_manager_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"rooms": [room.id], "license_number": "LIC-HIJACK"},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    profile.refresh_from_db()
+    assert profile.license_number != "LIC-HIJACK"
