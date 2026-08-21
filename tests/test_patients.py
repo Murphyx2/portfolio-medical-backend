@@ -4,6 +4,7 @@ from django.test.utils import CaptureQueriesContext
 from apps.ars.models import ARS, ARSProgram
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
+from apps.core.models import AuditLog
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord
@@ -260,3 +261,18 @@ def test_creating_patient_auto_creates_placeholder_record(auth_client, reception
     assert record.title == "Registro inicial"
     assert "Penicillin" in record.notes
     assert record.diagnosis == ""
+
+
+def test_creating_patient_audits_placeholder_record_creation(auth_client, receptionist_user):
+    """B7 regression guard: create_initial_record (apps/records/services.py)
+    now goes through log_audit -- previously this was a raw MedicalRecord
+    .create() call inside PatientViewSet.perform_create with no
+    corresponding AuditLog row."""
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(), format="json"
+    )
+    assert res.status_code == 201, res.data
+    record = MedicalRecord.objects.get(patient_id=res.data["id"])
+    assert AuditLog.objects.filter(
+        target_type="MedicalRecord", target_id=record.id, action="CREATE"
+    ).exists()
