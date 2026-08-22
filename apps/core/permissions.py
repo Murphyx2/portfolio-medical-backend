@@ -109,22 +109,9 @@ class CanManageMedicines(RoleUnionPermission):
     allowed_roles = (User.Role.ADMIN, User.Role.IT, User.Role.RECEPTIONIST)
 
 
-class CanManageRooms(BasePermission):
-    """Admins and IT may create/update rooms; receptionists may update
-    existing rooms but not create new ones (delete stays IsAdminOrIT-only,
-    see rooms/views.py get_permissions). Method-conditional role sets don't
-    fit the flat RoleUnionPermission shape, so this stays hand-written."""
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        if request.method == "POST":
-            return request.user.is_admin or request.user.is_it
-        return request.user.is_admin or request.user.is_it or request.user.is_receptionist
-
-
 class IsAdminOrCenterManager(RoleUnionPermission):
-    """Admins and center managers may manage services."""
+    """Admins and center managers may manage services, rooms, and room
+    types; every other role is read-only on these reference-data resources."""
 
     allowed_roles = (User.Role.ADMIN, User.Role.CENTER_MANAGER)
 
@@ -189,7 +176,8 @@ class IsStaffUser(BasePermission):
 
 
 class CanManageAppointments(RoleUnionPermission):
-    """Doctors, receptionists, and admins may create/update appointments.
+    """Doctors, nurses, receptionists, and admins may create/update
+    appointments.
 
     Object-level: a doctor may only write to appointments assigned to them
     (mirrors CanManageEncounters) -- the center-shared read scope in
@@ -197,7 +185,12 @@ class CanManageAppointments(RoleUnionPermission):
     colleague's appointment at the same center.
     """
 
-    allowed_roles = (User.Role.DOCTOR, User.Role.RECEPTIONIST, User.Role.ADMIN)
+    allowed_roles = (
+        User.Role.DOCTOR,
+        User.Role.NURSE,
+        User.Role.RECEPTIONIST,
+        User.Role.ADMIN,
+    )
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
@@ -206,22 +199,34 @@ class CanManageAppointments(RoleUnionPermission):
 
 
 class CanCancelAppointment(RoleUnionPermission):
-    """Only receptionists or admins may cancel an appointment. Was an inline
-    `self.permission_denied(...)` check inside AppointmentViewSet.cancel()
-    (B7) -- moved to a permission class so it's checked at dispatch() time
-    like every other write gate, instead of after get_object()."""
+    """Doctors, nurses, receptionists, or admins may cancel an appointment.
+    Was an inline `self.permission_denied(...)` check inside
+    AppointmentViewSet.cancel() (B7) -- moved to a permission class so it's
+    checked at dispatch() time like every other write gate, instead of after
+    get_object()."""
 
-    allowed_roles = (User.Role.RECEPTIONIST, User.Role.ADMIN)
+    allowed_roles = (
+        User.Role.DOCTOR,
+        User.Role.NURSE,
+        User.Role.RECEPTIONIST,
+        User.Role.ADMIN,
+    )
 
 
 class CanCompleteAppointment(RoleUnionPermission):
-    """Only doctors or admins may complete an appointment; a doctor may only
-    complete their own (mirrors CanManageAppointments' object-level check --
-    was previously enforced there since AppointmentViewSet.complete() ran
-    through write_permission_classes=[CanManageAppointments] on top of its
-    own inline role check)."""
+    """Doctors, nurses, receptionists, or admins may complete an
+    appointment; a doctor may only complete their own (mirrors
+    CanManageAppointments' object-level check -- was previously enforced
+    there since AppointmentViewSet.complete() ran through
+    write_permission_classes=[CanManageAppointments] on top of its own
+    inline role check)."""
 
-    allowed_roles = (User.Role.DOCTOR, User.Role.ADMIN)
+    allowed_roles = (
+        User.Role.DOCTOR,
+        User.Role.NURSE,
+        User.Role.RECEPTIONIST,
+        User.Role.ADMIN,
+    )
 
     def has_object_permission(self, request, view, obj):
         return is_owner_doctor(request.user, obj)

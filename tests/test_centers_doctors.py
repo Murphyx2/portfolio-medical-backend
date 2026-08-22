@@ -38,11 +38,11 @@ def test_admin_creates_center(auth_client, admin_user):
     assert MedicalCenter.objects.count() == 1
 
 
-def test_receptionist_can_read_centers(auth_client, receptionist_user, admin_user):
+def test_receptionist_cannot_read_centers(auth_client, receptionist_user, admin_user):
+    # Centers are hidden from every role except ADMIN.
     auth_client(admin_user).post("/api/centers/", _center_payload(), format="json")
     res = auth_client(receptionist_user).get("/api/centers/")
-    assert res.status_code == 200
-    assert res.data["count"] == 1
+    assert res.status_code == 403
 
 
 def test_receptionist_cannot_create_center(auth_client, receptionist_user):

@@ -167,7 +167,9 @@ def test_appointment_created_by_receptionist(
     assert appt.created_by == receptionist_user
 
 
-def test_nurse_cannot_create_appointment(auth_client, nurse_user, receptionist_user, doctor_user):
+def test_nurse_can_create_appointment(auth_client, nurse_user, receptionist_user, doctor_user):
+    # NURSE was widened onto CanManageAppointments alongside
+    # DOCTOR/RECEPTIONIST/ADMIN.
     patient = _make_patient(receptionist_user)
     doctor = _make_doctor(doctor_user)
     res = auth_client(nurse_user).post(
@@ -179,7 +181,7 @@ def test_nurse_cannot_create_appointment(auth_client, nurse_user, receptionist_u
         },
         format="json",
     )
-    assert res.status_code in (401, 403)
+    assert res.status_code == 201, res.data
 
 
 def test_appointment_patient_info_masked_for_it_role(
@@ -331,9 +333,11 @@ def test_doctor_without_binding_does_not_see_other_centers_appointment(
     assert res.data["count"] == 0
 
 
-def test_cancel_appointment_only_receptionist_or_admin(
+def test_cancel_appointment_forbidden_for_it(
     auth_client, receptionist_user, doctor_user, it_user
 ):
+    # DOCTOR/NURSE/RECEPTIONIST/ADMIN may cancel; IT (and every other
+    # non-listed role) may not.
     patient = _make_patient(receptionist_user)
     doctor = _make_doctor(doctor_user)
     appt = Appointment.objects.create(
