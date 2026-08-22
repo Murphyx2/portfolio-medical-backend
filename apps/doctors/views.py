@@ -52,12 +52,6 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
             self.permission_classes = [IsAdminOrITOrCenterManager]
         return super().get_permissions()
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        if getattr(self.request.user, "is_doctor", False):
-            qs = qs.filter(user=self.request.user)
-        return qs
-
     def perform_create(self, serializer):
         try:
             super().perform_create(serializer)
