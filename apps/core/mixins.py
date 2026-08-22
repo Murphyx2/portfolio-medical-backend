@@ -1,3 +1,4 @@
+from django.core.exceptions import FieldDoesNotExist
 from rest_framework.decorators import action
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
@@ -9,6 +10,12 @@ from apps.core.services import (
     log_audit,
     soft_delete_field_name,
 )
+
+# Sentinel for perform_update's before/after diff: fields that aren't a
+# plain scalar/FK model field (M2M, write-only/method fields not on the
+# model at all) can't be value-compared cheaply, so they're always counted
+# as "changed" instead of silently dropped from the audit trail.
+_UNCOMPARABLE = object()
 
 
 class SwapPermissionsMixin:
@@ -70,8 +77,34 @@ class AuditMixin:
         self._audit("CREATE", serializer.instance)
 
     def perform_update(self, serializer):
+        # Diff actual before/after values so "changed_fields" reflects what
+        # really changed, not just what the client's form happened to submit
+        # (many pages PATCH the full form on every edit). Field *names* only
+        # go into the audit log -- values are never logged, so this stays
+        # safe for PII fields too.
+        instance = serializer.instance
+        before = {}
+        for field_name in serializer.validated_data:
+            try:
+                model_field = instance._meta.get_field(field_name)
+            except FieldDoesNotExist:
+                before[field_name] = _UNCOMPARABLE
+                continue
+            if model_field.many_to_many:
+                before[field_name] = _UNCOMPARABLE
+                continue
+            before[field_name] = getattr(instance, field_name, _UNCOMPARABLE)
         super().perform_update(serializer)
-        self._audit("UPDATE", serializer.instance)
+        changed_fields = sorted(
+            name
+            for name, old_value in before.items()
+            if old_value is _UNCOMPARABLE or old_value != getattr(instance, name, None)
+        )
+        self._audit(
+            "UPDATE",
+            instance,
+            details={"changed_fields": changed_fields} if changed_fields else None,
+        )
 
     def perform_destroy(self, instance):
         self._audit("DELETE", instance)
@@ -102,12 +135,13 @@ class AuditMixin:
         self._audit("UPDATE", instance)
         return Response(self.get_serializer(instance).data)
 
-    def _audit(self, action: str, instance):
+    def _audit(self, action: str, instance, details: dict | None = None):
         log_audit(
             user=getattr(self.request, "user", None),
             action=action,
             target=instance,
             ip_address=client_ip(self.request),
+            details=details,
         )
 
     def log_action(self, obj, action: str, details: dict | None = None):
