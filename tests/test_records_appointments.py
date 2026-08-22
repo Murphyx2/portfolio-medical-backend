@@ -67,13 +67,13 @@ def test_receptionist_cannot_create_record(auth_client, receptionist_user):
     assert res.status_code in (401, 403)
 
 
-def test_receptionist_reads_redacted_clinical(auth_client, receptionist_user, doctor_user):
+def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor_user):
+    # Records access was narrowed to ADMIN/DOCTOR/NURSE only -- RECEPTIONIST
+    # is blocked outright now instead of getting a redacted read.
     patient = _make_patient(receptionist_user)
     _make_record(patient, doctor_user)
     res = auth_client(receptionist_user).get("/api/medical-records/")
-    assert res.status_code == 200
-    result = res.data["results"][0]
-    assert "Hypertension" not in result["diagnosis"]
+    assert res.status_code == 403
 
 
 def test_doctor_reads_full_clinical(auth_client, doctor_user, receptionist_user):
@@ -85,21 +85,17 @@ def test_doctor_reads_full_clinical(auth_client, doctor_user, receptionist_user)
     assert result["diagnosis"] == "Hypertension"
 
 
-def test_record_patient_info_masked_for_it_role(auth_client, it_user, doctor_user, receptionist_user):
-    """B6 regression guard: MedicalRecordSerializer's shared PatientLiteSerializer
-    (apps/records/serializers.py) still masks full_name/cedula/nss on the nested
-    patient_info for IT, per its own apply_masking(masked_nested=...) spec."""
+def test_it_cannot_read_records(auth_client, it_user, doctor_user, receptionist_user):
+    # Formerly a B6 masking regression guard for IT's read access; records
+    # access was later narrowed to ADMIN/DOCTOR/NURSE only, so IT is now
+    # blocked outright before the masking logic would ever run.
     patient = _make_patient(receptionist_user)
     patient.cedula = "00112345678"
     patient.save()
     _make_record(patient, doctor_user)
 
     res = auth_client(it_user).get("/api/medical-records/")
-    assert res.status_code == 200
-    patient_info = res.data["results"][0]["patient_info"]
-    assert patient_info["full_name"] != patient.full_name
-    assert patient_info["cedula"] != "00112345678"
-    assert patient_info["gender"] == "FEMALE"  # not masked -- outside masked_nested
+    assert res.status_code == 403
 
 
 def test_record_patient_info_full_for_doctor(auth_client, doctor_user, receptionist_user):

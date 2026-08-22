@@ -122,9 +122,6 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         errors = []
         if self.room_id is None:
             errors.append("A room is required to admit this encounter.")
-        if self.service_type_id and self.service_type.requires_diagnosis:
-            if not self.diagnoses.filter(is_primary=True).exists():
-                errors.append("A primary diagnosis is required to admit this encounter.")
         return errors
 
     def admit(self, *, override_conflict: bool = False) -> None:

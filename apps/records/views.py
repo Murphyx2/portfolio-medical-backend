@@ -13,9 +13,8 @@ from rest_framework.views import APIView
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanManageRecords,
-    IsStaffUser,
+    IsAdminDoctorOrNurse,
 )
-from apps.core.services import scope_queryset
 from apps.records.filters import RecordSearchFilter
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
@@ -30,14 +29,11 @@ class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewS
         "patient", "created_by", "center"
     ).prefetch_related("images")
     serializer_class = MedicalRecordSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
     filter_backends = [DjangoFilterBackend, RecordSearchFilter, OrderingFilter]
     filterset_fields = ["patient", "center", "title"]
     ordering_fields = ["date", "title", "patient__search_name", "created_by__username"]
-
-    def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="created_by")
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -47,12 +43,9 @@ class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewS
 class ConsultationLogViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = ConsultationLog.all_objects.select_related("patient", "doctor", "center")
     serializer_class = ConsultationLogSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
     filterset_fields = ["patient", "center", "doctor"]
-
-    def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor")
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -64,17 +57,9 @@ class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         "-created_at"
     )
     serializer_class = RecordImageSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
     filterset_fields = ["record"]
-
-    def get_queryset(self):
-        return scope_queryset(
-            super().get_queryset(),
-            self.request.user,
-            center_field="record__center",
-            owner_field="record__created_by",
-        )
 
     @transaction.atomic
     def perform_create(self, serializer):

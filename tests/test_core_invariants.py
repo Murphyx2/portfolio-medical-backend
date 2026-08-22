@@ -459,7 +459,10 @@ def test_ready_for_active_requires_room(doctor_user):
     assert "A room is required to admit this encounter." in errors
 
 
-def test_ready_for_active_requires_primary_diagnosis_when_service_type_requires_it(doctor_user):
+def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
+    # Diagnosis capture was removed from the admission flow entirely --
+    # ready_for_active() no longer checks requires_diagnosis/primary
+    # diagnosis at all, regardless of the service type's flag.
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
@@ -469,21 +472,6 @@ def test_ready_for_active_requires_primary_diagnosis_when_service_type_requires_
         room=room,
         service_type=_make_service_type(name="Needs Dx", requires_diagnosis=True),
     )
-    errors = encounter.ready_for_active()
-    assert "A primary diagnosis is required to admit this encounter." in errors
-
-
-def test_ready_for_active_passes_with_room_and_primary_diagnosis(doctor_user):
-    center = _make_center(code="C-READY2")
-    room = _make_room(center)
-    patient = _make_patient()
-    encounter = _make_encounter(
-        patient,
-        doctor_user,
-        room=room,
-        service_type=_make_service_type(name="Needs Dx 2", requires_diagnosis=True),
-    )
-    encounter.diagnoses.create(description="Primary", is_primary=True)
     assert encounter.ready_for_active() == []
 
 
