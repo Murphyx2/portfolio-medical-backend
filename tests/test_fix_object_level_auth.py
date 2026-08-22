@@ -89,12 +89,14 @@ def test_doctor_can_book_appointment_for_own_profile(
     assert Appointment.objects.count() == 1
 
 
-# ---------- (b) records: center must be approved for the doctor ----------
+# ---------- (b) records: doctors have unrestricted access, unlike appointments ----------
 
-def test_doctor_record_with_unapproved_center_returns_400(
+def test_doctor_record_with_unapproved_center_returns_201(
     auth_client, doctor_user
 ):
-    profile = _make_doctor(doctor_user)
+    # Unlike appointments, records are not scoped to a doctor's approved
+    # centers -- any doctor may write a record at any center.
+    _make_doctor(doctor_user)
     unapproved = _make_center("C-UN-APPROVED")
     patient = _make_patient()
 
@@ -108,9 +110,8 @@ def test_doctor_record_with_unapproved_center_returns_400(
         },
         format="json",
     )
-    assert res.status_code == 400
-    assert "not approved" in str(res.data).lower()
-    assert MedicalRecord.objects.count() == 0
+    assert res.status_code == 201, res.data
+    assert MedicalRecord.objects.count() == 1
 
 
 def test_doctor_record_with_null_center_returns_201(auth_client, doctor_user):
@@ -178,9 +179,11 @@ def test_doctor_appointment_list_scoped_to_own_profile(
     assert other_id not in ids
 
 
-def test_doctor_record_list_scoped_to_own_center(
+def test_doctor_record_list_is_unscoped(
     auth_client, doctor_user, make_user
 ):
+    # Doctors see every record, not just their own center's -- unlike
+    # appointments, which stay scoped (see test_doctor_appointment_list_scoped_to_own_profile).
     own_profile = _make_doctor(doctor_user)
     center = _make_center("C-SCOPED")
     _approve_binding(own_profile, center)
@@ -198,4 +201,4 @@ def test_doctor_record_list_scoped_to_own_center(
     assert res.status_code == 200
     ids = {item["id"] for item in res.data["results"]}
     assert own_record.id in ids
-    assert other_record.id not in ids
+    assert other_record.id in ids

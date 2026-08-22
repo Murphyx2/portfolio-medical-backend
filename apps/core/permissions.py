@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from apps.accounts.models import User
-from apps.core.services import can_view_inactive, user_accessible_center_ids
+from apps.core.services import can_view_inactive
 
 
 def is_staff_role(user) -> bool:
@@ -154,18 +154,27 @@ class CanManageRecords(RoleUnionPermission):
         user = request.user
         if getattr(user, "is_admin", False):
             return True
-        owner_id = getattr(obj, "created_by_id", None)
-        if owner_id is None:
-            owner_id = getattr(obj, "uploaded_by_id", None)
-        if owner_id is None:
-            owner_id = getattr(obj, "doctor_id", None)
+        # Doctors have unrestricted read/write access to every record --
+        # unlike other apps (e.g. Appointments), records are not scoped to a
+        # doctor's own centers here.
         if getattr(user, "is_doctor", False):
-            center_ids = user_accessible_center_ids(user)
-            center_id = getattr(obj, "center_id", None)
-            return center_id in center_ids or owner_id == user.id
+            return True
         if getattr(user, "is_nurse", False):
+            owner_id = getattr(obj, "created_by_id", None)
+            if owner_id is None:
+                owner_id = getattr(obj, "uploaded_by_id", None)
+            if owner_id is None:
+                owner_id = getattr(obj, "doctor_id", None)
             return owner_id == user.id
         return False
+
+
+class IsAdminDoctorOrNurse(RoleUnionPermission):
+    """Records read access -- ADMIN/DOCTOR/NURSE only. RECEPTIONIST, IT, and
+    CENTER_MANAGER can no longer see medical records at all (narrower than
+    the general IsStaffUser 6-role set every other view uses)."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR, User.Role.NURSE)
 
 
 class IsStaffUser(BasePermission):

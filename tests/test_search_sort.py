@@ -245,11 +245,11 @@ def test_record_search_by_formatted_cedula(auth_client, doctor_user, records_set
     }
 
 
-def test_record_search_masked_role_title_only(auth_client, it_user, records_setup):
-    # IT can search by title but not by patient name/cedula/nss.
-    assert auth_client(it_user).get("/api/medical-records/?search=luis").data["count"] == 0
+def test_record_search_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Records access was narrowed to ADMIN/DOCTOR/NURSE only -- IT is now
+    # blocked outright, superseding the old masked-search-by-title behavior.
     res = auth_client(it_user).get("/api/medical-records/?search=consulta")
-    assert res.data["count"] == 1
+    assert res.status_code == 403
 
 
 def test_record_ordering(auth_client, doctor_user, records_setup):
@@ -265,11 +265,11 @@ def test_record_exposes_patient_cedula_and_nss(auth_client, doctor_user, records
     assert res.data["results"][0]["patient_info"]["nss"] == "12345678901"
 
 
-def test_record_masks_patient_pii_for_masked_role(auth_client, it_user, records_setup):
+def test_record_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Formerly a PII-masking guard for IT; records access was later narrowed
+    # to ADMIN/DOCTOR/NURSE only, so IT is blocked outright now.
     res = auth_client(it_user).get("/api/medical-records/?search=consulta")
-    info = res.data["results"][0]["patient_info"]
-    assert "01001084920" not in info["cedula"]
-    assert "12345678901" not in info["nss"]
+    assert res.status_code == 403
 
 
 # ---------------------------------------------------------------------------

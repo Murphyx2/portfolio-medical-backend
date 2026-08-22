@@ -5,34 +5,11 @@ from rest_framework import serializers
 
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
-from apps.core.services import can_write_center, sign_media_token
+from apps.core.services import sign_media_token
 from apps.patients.serializers import PatientSummarySerializer
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
-
-
-def _validate_patient_scope(context, attrs, user, instance):
-    """Doctors may only write records for patients not bound to other centers."""
-    if not user or not getattr(user, "is_doctor", False):
-        return
-    patient = attrs.get("patient") or (instance.patient if instance else None)
-    if patient is None:
-        return
-    if not can_write_center(user, patient.center):
-        raise serializers.ValidationError(
-            {"patient": "The patient is not in your accessible centers."}
-        )
-
-
-def _validate_center_scope(context, attrs):
-    """Doctors may only write records/logs at a center they're approved for."""
-    user = getattr(context.get("request"), "user", None)
-    center = attrs.get("center")
-    if user and center is not None and not can_write_center(user, center):
-        raise serializers.ValidationError(
-            {"center": "You are not approved to work at this center."}
-        )
 
 
 class PatientLiteSerializer(PatientSummarySerializer):
@@ -71,16 +48,6 @@ class RecordImageSerializer(CoreModelSerializer):
         if format_name not in ALLOWED_IMAGE_FORMATS:
             raise serializers.ValidationError("Unsupported image format.")
         return value
-
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        record = attrs.get("record")
-        if user and getattr(user, "is_doctor", False) and record is not None:
-            if not (can_write_center(user, record.center) or record.created_by_id == user.id):
-                raise serializers.ValidationError(
-                    {"record": "The record is not in your scope."}
-                )
-        return attrs
 
     def get_image_url(self, obj):
         if not obj.image:
@@ -122,12 +89,6 @@ class MedicalRecordSerializer(CoreModelSerializer):
     def get_created_by_name(self, obj):
         return full_name_or_username(obj.created_by)
 
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        _validate_center_scope(self.context, attrs)
-        _validate_patient_scope(self.context, attrs, user, self.instance)
-        return attrs
-
     def to_representation(self, instance):
         data = super().to_representation(instance)
         return apply_masking(
@@ -166,12 +127,6 @@ class ConsultationLogSerializer(CoreModelSerializer):
 
     def get_doctor_name(self, obj):
         return full_name_or_username(obj.doctor)
-
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        _validate_center_scope(self.context, attrs)
-        _validate_patient_scope(self.context, attrs, user, self.instance)
-        return attrs
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

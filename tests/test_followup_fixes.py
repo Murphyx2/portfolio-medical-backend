@@ -53,27 +53,27 @@ def _make_record(patient, doctor_user, **overrides):
 # F1: masking on records / logs / appointments for masked roles
 # ---------------------------------------------------------------------------
 
-def test_it_and_cm_see_masked_patient_name_on_record(auth_client, make_user, doctor_user):
+# Records access was later narrowed to ADMIN/DOCTOR/NURSE only (RECEPTIONIST/
+# IT/CENTER_MANAGER can no longer read records/logs at all -- see
+# IsAdminDoctorOrNurse), which supersedes the masking-for-those-roles
+# behavior these tests used to cover. Records masking for IT/CENTER_MANAGER
+# is now moot since they're blocked before masking would ever apply.
+def test_it_and_cm_cannot_read_records(auth_client, make_user, doctor_user):
     patient = _make_patient()
     record = _make_record(patient, doctor_user)
     for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
         res = auth_client(user).get(f"/api/medical-records/{record.id}/")
-        assert res.status_code == 200
-        assert res.data["patient_info"]["full_name"] != "Jane Doe"
-        assert MASK in res.data["patient_info"]["full_name"]
-        assert res.data["created_by_name"] != doctor_user.username
-        assert MASK in res.data["created_by_name"]
+        assert res.status_code == 403
 
 
-def test_receptionist_sees_full_patient_name_on_record(auth_client, receptionist_user, doctor_user):
+def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor_user):
     patient = _make_patient()
     record = _make_record(patient, doctor_user)
     res = auth_client(receptionist_user).get(f"/api/medical-records/{record.id}/")
-    assert res.status_code == 200
-    assert res.data["patient_info"]["full_name"] == "Jane Doe"
+    assert res.status_code == 403
 
 
-def test_it_and_cm_see_masked_patient_name_on_log(auth_client, make_user, doctor_user):
+def test_it_and_cm_cannot_read_consultation_logs(auth_client, make_user, doctor_user):
     patient = _make_patient()
     log = ConsultationLog.objects.create(
         patient=patient,
@@ -83,11 +83,7 @@ def test_it_and_cm_see_masked_patient_name_on_log(auth_client, make_user, doctor
     )
     for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
         res = auth_client(user).get(f"/api/consultation-logs/{log.id}/")
-        assert res.status_code == 200
-        assert res.data["patient_info"]["full_name"] != "Jane Doe"
-        assert MASK in res.data["patient_info"]["full_name"]
-        assert res.data["doctor_name"] != doctor_user.username
-        assert MASK in res.data["doctor_name"]
+        assert res.status_code == 403
 
 
 def test_it_and_cm_see_masked_patient_name_and_notes_on_appointment(

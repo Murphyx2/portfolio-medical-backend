@@ -231,8 +231,10 @@ def test_doctor_without_binding_does_not_see_other_centers_encounter(
 
 
 # ---------------------------------------------------------------------------
-# Admit lifecycle: room required, primary diagnosis required unless the
-# service type is exempted, encounter_number assigned on admit.
+# Admit lifecycle: room required, encounter_number assigned on admit.
+# A primary diagnosis is no longer required to admit (diagnosis capture was
+# removed from the admission flow entirely) regardless of the service
+# type's requires_diagnosis flag -- that flag is now unused by ready_for_active().
 # ---------------------------------------------------------------------------
 
 
@@ -246,29 +248,23 @@ def test_admit_requires_room(auth_client, admin_user, doctor_user):
     assert res.status_code == 400, res.data
 
 
-def test_admit_requires_primary_diagnosis_unless_exempted(
-    auth_client, admin_user, doctor_user
-):
+def test_admit_does_not_require_a_diagnosis(auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     center = _center()
     room = _room(center=center)
 
-    # Non-exempted type: blocked without a primary diagnosis.
+    # requires_diagnosis=True type: admits fine with no diagnosis at all now.
     patient1 = _patient(cedula="00100000031")
     encounter1 = Encounter.objects.create(
         service_type=_service_type(requires_diagnosis=True),
         patient=patient1, doctor=doctor, room=room, created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter1.id}/admit/")
-    assert res.status_code == 400, res.data
-
-    encounter1.diagnoses.create(description="Flu", is_primary=True)
-    res = auth_client(admin_user).post(f"/api/encounters/{encounter1.id}/admit/")
     assert res.status_code == 200, res.data
     assert res.data["status"] == "ACTIVE"
     assert res.data["encounter_number"]
 
-    # Exempted type: admits with no diagnosis at all.
+    # requires_diagnosis=False type: admits with no diagnosis, as before.
     patient2 = _patient(cedula="00100000032")
     encounter2 = Encounter.objects.create(
         service_type=_service_type(name="Vacunación", requires_diagnosis=False),
