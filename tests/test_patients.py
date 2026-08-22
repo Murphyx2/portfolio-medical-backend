@@ -255,10 +255,8 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
 def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
     auth_client, doctor_user, db
 ):
-    # Doctor-scoping used to be a join + .distinct(); with multiple
-    # MedicalRecords for the same center-bound patient, a join would have
-    # produced duplicate rows (masked by .distinct()). The Exists() subquery
-    # scoping doesn't join at all, so there's nothing to de-duplicate.
+    # PatientViewSet doesn't join medical_records at all, so multiple
+    # MedicalRecords for the same patient can't produce duplicate rows here.
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )

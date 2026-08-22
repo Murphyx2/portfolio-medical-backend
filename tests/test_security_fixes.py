@@ -81,7 +81,11 @@ def test_search_name_populated_and_searchable(auth_client, receptionist_user):
 # M-02: patient center scoping for doctors
 # ---------------------------------------------------------------------------
 
-def test_doctor_sees_centerless_and_own_center_not_foreign(auth_client, make_user):
+def test_doctor_sees_patients_across_all_centers(auth_client, make_user):
+    # Doctors have unrestricted patient-list visibility (matching their
+    # already-unrestricted access to medical records via CanManageRecords) --
+    # this was an intentional policy change away from center-scoped
+    # visibility, see PatientViewSet.get_queryset().
     doc = make_user("doc", "DOCTOR")
     center = _make_center("C1", "My Center")
     other = _make_center("C2", "Other Center")
@@ -96,10 +100,10 @@ def test_doctor_sees_centerless_and_own_center_not_foreign(auth_client, make_use
     ids = {row["id"] for row in res.data["results"]}
     assert unbound.id in ids
     assert own.id in ids
-    assert foreign.id not in ids
+    assert foreign.id in ids
 
     assert client.get(f"/api/patients/{own.id}/").status_code == 200
-    assert client.get(f"/api/patients/{foreign.id}/").status_code == 404
+    assert client.get(f"/api/patients/{foreign.id}/").status_code == 200
 
 
 def test_receptionist_sees_all_patients(auth_client, receptionist_user):

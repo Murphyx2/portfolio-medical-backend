@@ -1,11 +1,10 @@
-from django.db.models import Exists, OuterRef, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter
 
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanDeletePatient, PatientDataPermission
-from apps.core.services import is_masked_role, user_accessible_center_ids
+from apps.core.services import is_masked_role
 from apps.patients.filters import PatientSearchFilter
 from apps.patients.models import Patient
 from apps.patients.serializers import PatientSerializer
@@ -49,21 +48,4 @@ class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
             # directly (see get_filterset_class()), with no method hook to
             # override instead.
             self.filterset_fields = ["gender", "ars", "center"]
-        if getattr(user, "is_doctor", False):
-            from apps.records.models import MedicalRecord
-
-            center_ids = user_accessible_center_ids(user)
-            # Centerless patients are unbound (visible); center-bound patients
-            # are visible only to their center's doctors (or via their records).
-            # An EXISTS subquery scopes by records without joining medical_records
-            # (avoids row multiplication and the DISTINCT that would follow).
-            qs = qs.filter(
-                Q(center_id__isnull=True)
-                | Q(center_id__in=center_ids)
-                | Exists(
-                    MedicalRecord.objects.filter(
-                        patient_id=OuterRef("pk"), center_id__in=center_ids
-                    )
-                )
-            )
         return qs
