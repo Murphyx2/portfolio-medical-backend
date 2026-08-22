@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.core.models import AuditLog
 
 
 def test_login_success(api_client, admin_user):
@@ -174,3 +175,40 @@ def test_it_cannot_deactivate_or_restore_user(auth_client, it_user, doctor_user)
     client = auth_client(it_user)
     assert client.delete(f"/api/auth/users/{doctor_user.id}/").status_code == 403
     assert client.post(f"/api/auth/users/{doctor_user.id}/restore/").status_code in (403, 404)
+
+
+def test_update_audit_log_records_changed_fields(auth_client, admin_user, doctor_user):
+    res = auth_client(admin_user).patch(
+        f"/api/auth/users/{doctor_user.id}/",
+        {"role": "NURSE"},
+        format="json",
+    )
+    assert res.status_code == 200
+    entry = AuditLog.objects.filter(
+        action="UPDATE", target_type="User", target_id=doctor_user.id
+    ).latest("created_at")
+    assert entry.details == {"changed_fields": ["role"]}
+    assert entry.target_type == "User"
+    assert entry.target_id == doctor_user.id
+
+
+def test_update_audit_log_diffs_full_form_submission(auth_client, admin_user, doctor_user):
+    # The frontend PATCHes every field on every edit, not just the one the
+    # user touched -- changed_fields must reflect actual value changes, not
+    # just which keys were present in the request body.
+    res = auth_client(admin_user).patch(
+        f"/api/auth/users/{doctor_user.id}/",
+        {
+            "username": doctor_user.username,
+            "email": doctor_user.email,
+            "first_name": doctor_user.first_name,
+            "last_name": doctor_user.last_name,
+            "role": "NURSE",
+        },
+        format="json",
+    )
+    assert res.status_code == 200
+    entry = AuditLog.objects.filter(
+        action="UPDATE", target_type="User", target_id=doctor_user.id
+    ).latest("created_at")
+    assert entry.details == {"changed_fields": ["role"]}
