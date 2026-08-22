@@ -10,6 +10,16 @@ class RoomTypeSerializer(CoreModelSerializer):
         fields = ["id", "name", "active"]
 
 
+class RoomLiteSerializer(serializers.ModelSerializer):
+    """Compact read-only representation for nesting inside other apps'
+    serializers (e.g. DoctorProfileSerializer.rooms_detail) -- mirrors
+    services' ServiceLiteSerializer pattern."""
+
+    class Meta:
+        model = Room
+        fields = ["id", "name"]
+
+
 class RoomSerializer(CoreModelSerializer):
     center_name = serializers.CharField(source="center.name", read_only=True)
     room_type_name = serializers.CharField(source="room_type.name", read_only=True)

@@ -31,6 +31,13 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
     services = models.ManyToManyField(
         "services.Service", related_name="doctors", blank=True
     )
+    # Rooms this doctor is available in -- drives the Encounters admission
+    # form's room auto-fill/filtering the same way `services` drives its
+    # service auto-fill/filtering. Distinct related_name from both
+    # `default_room` ("default_for_doctors") and `services` ("doctors").
+    rooms = models.ManyToManyField(
+        "rooms.Room", related_name="assignable_doctors", blank=True
+    )
 
     class Meta:
         ordering = ["user__last_name", "user__first_name"]

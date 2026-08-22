@@ -7,6 +7,8 @@ from apps.core.serializers import CoreModelSerializer
 from apps.core.services import can_write_center, is_own_doctor_relation
 from apps.core.validators import validate_phone
 from apps.doctors.models import DoctorProfile, DoctorSchedule
+from apps.rooms.models import Room
+from apps.rooms.serializers import RoomLiteSerializer
 from apps.services.models import Service
 from apps.services.serializers import ServiceLiteSerializer
 
@@ -40,6 +42,10 @@ class DoctorProfileSerializer(CoreModelSerializer):
         many=True, required=False, queryset=Service.objects.filter(active=True)
     )
     services_detail = ServiceLiteSerializer(source="services", many=True, read_only=True)
+    rooms = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=Room.objects.filter(active=True)
+    )
+    rooms_detail = RoomLiteSerializer(source="rooms", many=True, read_only=True)
 
     class Meta:
         model = DoctorProfile
@@ -58,6 +64,8 @@ class DoctorProfileSerializer(CoreModelSerializer):
             "default_room_name",
             "services",
             "services_detail",
+            "rooms",
+            "rooms_detail",
             "active",
         ]
         read_only_fields = ["code"]
@@ -85,21 +93,32 @@ class DoctorProfileSerializer(CoreModelSerializer):
                 )
         return value
 
+    def validate_rooms(self, value):
+        # Same write gate as validate_services above -- rooms is the same
+        # kind of doctor-availability assignment as services.
+        if "rooms" in self.initial_data:
+            request = self.context.get("request")
+            if not IsAdminOrCenterManager().has_permission(request, None):
+                raise serializers.ValidationError(
+                    "Only admins or center managers may edit a doctor's rooms."
+                )
+        return value
+
     def validate(self, attrs):
         # The view's write permission (IsAdminOrITOrCenterManager) admits a
         # CENTER_MANAGER at the request level so they can reach the
-        # `services` field above -- this is what actually confines them to
-        # *only* that field, since they otherwise have none of IT's general
-        # doctor-profile write access.
+        # `services`/`rooms` fields above -- this is what actually confines
+        # them to *only* those fields, since they otherwise have none of
+        # IT's general doctor-profile write access.
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         if user and getattr(user, "is_center_manager", False) and not getattr(
             user, "is_admin", False
         ):
-            other_fields = set(self.initial_data.keys()) - {"services"}
+            other_fields = set(self.initial_data.keys()) - {"services", "rooms"}
             if other_fields:
                 raise serializers.ValidationError(
-                    "Center managers may only edit a doctor's services."
+                    "Center managers may only edit a doctor's services and rooms."
                 )
         return attrs
 
