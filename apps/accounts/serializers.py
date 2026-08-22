@@ -7,6 +7,7 @@ User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="get_full_name", read_only=True)
+    is_locked = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -19,9 +20,12 @@ class UserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "is_active",
+            "is_locked",
+            "locked_until",
+            "last_login",
             "date_joined",
         ]
-        read_only_fields = ["id", "date_joined"]
+        read_only_fields = ["id", "date_joined", "locked_until", "last_login"]
 
     def validate(self, attrs):
         _guard_role_assignment(self.context, attrs, instance=self.instance)
@@ -76,6 +80,18 @@ def _guard_role_assignment(context, attrs, instance=None):
         raise serializers.ValidationError(
             {"role": "Only admins can modify admin accounts."}
         )
+
+
+class AdminSetPasswordSerializer(serializers.Serializer):
+    """Admin-initiated password reset (distinct from a self-service change:
+    no old-password confirmation, since the acting admin isn't the account
+    owner)."""
+
+    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+
+    def validate_password(self, value):
+        validate_password(value, user=self.context.get("target_user"))
+        return value
 
 
 class LoginSerializer(serializers.Serializer):

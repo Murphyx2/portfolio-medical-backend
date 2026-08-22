@@ -76,8 +76,11 @@ class CachedListViewMixin:
     authenticated staff member (no PII, no per-role masking, no per-user
     query scoping) to cache it server-side.
 
-    Set ``cache_model`` to the key used in ``_CACHE_INVALIDATION_MAP`` above
-    and wired to a signal receiver in ``apps.core.signals``.
+    ``cache_model`` defaults to the viewset's ``queryset.model`` lowercase
+    model name (Django's canonical ``_meta.model_name``, matching the key
+    used in ``_CACHE_INVALIDATION_MAP`` above and the signal receivers wired
+    in ``apps.core.signals``) -- set it explicitly only if a viewset's model
+    name doesn't match its invalidation-map key.
 
     The permission layer still runs first: DRF's ``dispatch()`` calls
     ``check_permissions()`` before ``list()`` is ever invoked, so this cache
@@ -92,8 +95,13 @@ class CachedListViewMixin:
     requester's absolute URLs.
     """
 
-    cache_model: str = ""
+    cache_model: str | None = None
     cache_ttl: int = CACHE_TTL
+
+    def get_cache_model(self) -> str:
+        if self.cache_model:
+            return self.cache_model
+        return self.queryset.model._meta.model_name
 
     def list(self, request, *args, **kwargs):
         user = getattr(request, "user", None)
@@ -104,7 +112,7 @@ class CachedListViewMixin:
             and request.query_params.get("include_inactive", "").lower() == "true"
         ):
             return super().list(request, *args, **kwargs)
-        key = list_cache_key(self.cache_model, request)
+        key = list_cache_key(self.get_cache_model(), request)
         cached = cache.get(key)
         if cached is not None:
             return Response(cached)

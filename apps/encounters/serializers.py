@@ -2,20 +2,44 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.masking import apply_masking
-from apps.core.serializers import CoreModelSerializer
-from apps.doctors.models import DoctorProfile
+from apps.core.serializers import CoreModelSerializer, full_name_or_username
+from apps.core.services import is_own_doctor_relation, program_belongs_to_ars
+from apps.doctors.serializers import DoctorLiteSerializer
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
-from apps.patients.filters import patient_age
-from apps.patients.models import Patient
+from apps.patients.serializers import PatientSummarySerializer as _PatientSummaryBase
 
 
-class PatientSummarySerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-    age = serializers.SerializerMethodField()
-    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
+def _sync_related(manager, items, *, is_valid, build_fields):
+    """Diff-upsert-then-delete-orphans, shared by EncounterSerializer's
+    _set_diagnoses/_set_services: an item carrying an ``id`` that matches an
+    existing row is updated in place (preserving created_at/pk/FK
+    references); anything else is created fresh; any row not resubmitted is
+    deleted. ``manager`` is a related manager already scoped to the parent
+    encounter (e.g. ``encounter.diagnoses``), so lookups/creates through it
+    are implicitly scoped without an explicit ``encounter=`` filter.
+    """
+    keep_ids = []
+    for item in items:
+        if not is_valid(item):
+            continue
+        fields = build_fields(item)
+        item_id = item.get("id")
+        obj = manager.filter(pk=item_id).first() if item_id else None
+        if obj is not None:
+            for attr, value in fields.items():
+                setattr(obj, attr, value)
+            obj.save()
+        else:
+            obj = manager.create(**fields)
+        keep_ids.append(obj.pk)
+    manager.exclude(pk__in=keep_ids).delete()
 
-    class Meta:
-        model = Patient
+
+class PatientSummarySerializer(_PatientSummaryBase):
+    # Masked subset (see EncounterSerializer's apply_masking(masked_nested=,
+    # masked_nested_nulls=) below): full_name, cedula, allergies,
+    # critical_conditions, guardian_cedula, and age nulled.
+    class Meta(_PatientSummaryBase.Meta):
         fields = [
             "id",
             "full_name",
@@ -30,17 +54,6 @@ class PatientSummarySerializer(serializers.ModelSerializer):
             "has_guardian",
             "guardian_cedula",
         ]
-
-    def get_age(self, obj) -> int | None:
-        return patient_age(obj)
-
-
-class DoctorLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = DoctorProfile
-        fields = ["id", "code", "full_name", "specialty"]
 
 
 class EncounterDiagnosisSerializer(serializers.ModelSerializer):
@@ -134,17 +147,16 @@ class EncounterSerializer(CoreModelSerializer):
         ]
 
     def get_created_by_name(self, obj):
-        return obj.created_by.get_full_name() or obj.created_by.username
+        return full_name_or_username(obj.created_by)
 
     def validate_doctor(self, value):
         if value is None:
             return value
         user = self._request_user()
-        if user and user.is_authenticated and getattr(user, "is_doctor", False):
-            if not hasattr(user, "doctor_profile") or value.id != user.doctor_profile.id:
-                raise serializers.ValidationError(
-                    "Doctors may only manage encounters for themselves."
-                )
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Doctors may only manage encounters for themselves."
+            )
         return value
 
     def validate(self, attrs):
@@ -152,7 +164,7 @@ class EncounterSerializer(CoreModelSerializer):
         if ars is None and self.instance is not None:
             ars = self.instance.ars
         program = attrs.get("ars_program")
-        if ars is not None and program is not None and program.ars_id != ars.id:
+        if not program_belongs_to_ars(ars, program):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
             )
@@ -201,58 +213,30 @@ class EncounterSerializer(CoreModelSerializer):
 
     @staticmethod
     def _set_diagnoses(encounter, diagnoses):
-        keep_ids = []
-        for item in diagnoses:
-            description = (item.get("description") or "").strip()
-            if not description:
-                continue
-            diagnosis_id = item.get("id")
-            if diagnosis_id:
-                diagnosis = EncounterDiagnosis.objects.filter(
-                    pk=diagnosis_id, encounter=encounter
-                ).first()
-                if diagnosis is not None:
-                    diagnosis.description = description
-                    diagnosis.is_primary = item.get("is_primary", False)
-                    diagnosis.save()
-                    keep_ids.append(diagnosis.pk)
-                    continue
-            keep_ids.append(
-                EncounterDiagnosis.objects.create(
-                    encounter=encounter,
-                    description=description,
-                    is_primary=item.get("is_primary", False),
-                ).pk
-            )
-        encounter.diagnoses.exclude(pk__in=keep_ids).delete()
+        _sync_related(
+            encounter.diagnoses,
+            diagnoses,
+            is_valid=lambda item: bool((item.get("description") or "").strip()),
+            build_fields=lambda item: {
+                "description": (item.get("description") or "").strip(),
+                "is_primary": item.get("is_primary", False),
+            },
+        )
 
     @staticmethod
     def _set_services(encounter, services):
-        keep_ids = []
-        for item in services:
-            service = item.get("service")
-            if service is None:
-                continue
-            service_id = item.get("id")
-            fields = {
-                "service": service,
+        _sync_related(
+            encounter.services,
+            services,
+            is_valid=lambda item: item.get("service") is not None,
+            build_fields=lambda item: {
+                "service": item.get("service"),
                 "doctor": item.get("doctor"),
                 "quantity": item.get("quantity", 1),
                 "notes": item.get("notes", ""),
                 "status": item.get("status", EncounterService.Status.PENDING),
-            }
-            if service_id:
-                line = EncounterService.objects.filter(
-                    pk=service_id, encounter=encounter
-                ).first()
-                if line is not None:
-                    for attr, value in fields.items():
-                        setattr(line, attr, value)
-                    line.save()
-                    keep_ids.append(line.pk)
-                    continue
-            keep_ids.append(EncounterService.objects.create(encounter=encounter, **fields).pk)
-        encounter.services.exclude(pk__in=keep_ids).delete()
+            },
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

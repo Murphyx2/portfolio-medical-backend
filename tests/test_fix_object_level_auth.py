@@ -13,6 +13,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord
+from apps.services.models import Service, ServiceType
 
 
 def _make_patient():
@@ -26,10 +27,16 @@ def _make_patient():
     )
 
 
+def _make_service():
+    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    return Service.objects.create(
+        simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
+    )
+
+
 def _make_doctor(user, license_number=None):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=license_number or f"LIC-{user.id}",
         contact_phone="555-0000",
     )
@@ -76,12 +83,14 @@ def test_doctor_can_book_appointment_for_own_profile(
 ):
     profile = _make_doctor(doctor_user)
     patient = _make_patient()
+    service = _make_service()
 
     res = auth_client(doctor_user).post(
         "/api/appointments/",
         {
             "patient": patient.id,
             "doctor": profile.id,
+            "service": service.id,
             "date_time": "2026-08-10T09:00:00Z",
         },
         format="json",
@@ -90,12 +99,14 @@ def test_doctor_can_book_appointment_for_own_profile(
     assert Appointment.objects.count() == 1
 
 
-# ---------- (b) records: center must be approved for the doctor ----------
+# ---------- (b) records: doctors have unrestricted access, unlike appointments ----------
 
-def test_doctor_record_with_unapproved_center_returns_400(
+def test_doctor_record_with_unapproved_center_returns_201(
     auth_client, doctor_user
 ):
-    profile = _make_doctor(doctor_user)
+    # Unlike appointments, records are not scoped to a doctor's approved
+    # centers -- any doctor may write a record at any center.
+    _make_doctor(doctor_user)
     unapproved = _make_center("C-UN-APPROVED")
     patient = _make_patient()
 
@@ -109,9 +120,8 @@ def test_doctor_record_with_unapproved_center_returns_400(
         },
         format="json",
     )
-    assert res.status_code == 400
-    assert "not approved" in str(res.data).lower()
-    assert MedicalRecord.objects.count() == 0
+    assert res.status_code == 201, res.data
+    assert MedicalRecord.objects.count() == 1
 
 
 def test_doctor_record_with_null_center_returns_201(auth_client, doctor_user):
@@ -179,9 +189,11 @@ def test_doctor_appointment_list_scoped_to_own_profile(
     assert other_id not in ids
 
 
-def test_doctor_record_list_scoped_to_own_center(
+def test_doctor_record_list_is_unscoped(
     auth_client, doctor_user, make_user
 ):
+    # Doctors see every record, not just their own center's -- unlike
+    # appointments, which stay scoped (see test_doctor_appointment_list_scoped_to_own_profile).
     own_profile = _make_doctor(doctor_user)
     center = _make_center("C-SCOPED")
     _approve_binding(own_profile, center)
@@ -199,4 +211,4 @@ def test_doctor_record_list_scoped_to_own_center(
     assert res.status_code == 200
     ids = {item["id"] for item in res.data["results"]}
     assert own_record.id in ids
-    assert other_record.id not in ids
+    assert other_record.id in ids

@@ -52,6 +52,9 @@ class DoctorCenterBinding(TimestampedModel, SoftDeleteModel):
     class Meta:
         ordering = ["center", "doctor"]
         unique_together = ("doctor", "center")
+        # user_accessible_center_ids() (apps/core/services.py) filters on
+        # exactly this pair on every doctor-scoped request.
+        indexes = [models.Index(fields=["doctor", "approved"])]
 
     def __str__(self) -> str:
         status = "approved" if self.approved else "pending"

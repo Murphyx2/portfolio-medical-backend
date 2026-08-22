@@ -245,11 +245,11 @@ def test_record_search_by_formatted_cedula(auth_client, doctor_user, records_set
     }
 
 
-def test_record_search_masked_role_title_only(auth_client, it_user, records_setup):
-    # IT can search by title but not by patient name/cedula/nss.
-    assert auth_client(it_user).get("/api/medical-records/?search=luis").data["count"] == 0
+def test_record_search_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Records access was narrowed to ADMIN/DOCTOR/NURSE only -- IT is now
+    # blocked outright, superseding the old masked-search-by-title behavior.
     res = auth_client(it_user).get("/api/medical-records/?search=consulta")
-    assert res.data["count"] == 1
+    assert res.status_code == 403
 
 
 def test_record_ordering(auth_client, doctor_user, records_setup):
@@ -265,11 +265,11 @@ def test_record_exposes_patient_cedula_and_nss(auth_client, doctor_user, records
     assert res.data["results"][0]["patient_info"]["nss"] == "12345678901"
 
 
-def test_record_masks_patient_pii_for_masked_role(auth_client, it_user, records_setup):
+def test_record_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Formerly a PII-masking guard for IT; records access was later narrowed
+    # to ADMIN/DOCTOR/NURSE only, so IT is blocked outright now.
     res = auth_client(it_user).get("/api/medical-records/?search=consulta")
-    info = res.data["results"][0]["patient_info"]
-    assert "01001084920" not in info["cedula"]
-    assert "12345678901" not in info["nss"]
+    assert res.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +302,6 @@ def test_centers_ordering_by_doctor_count(auth_client, admin_user, db, doctor_us
     )
     prof = DoctorProfile.objects.create(
         user=doctor_user,
-        specialty="GP",
         license_number="LIC1",
         contact_phone="8095550000",
     )
@@ -317,13 +316,13 @@ def test_doctors_search_and_ordering(auth_client, admin_user, db, make_user):
     u1 = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     u2 = make_user("docB", "DOCTOR", first_name="Abe", last_name="B")
     DoctorProfile.objects.create(
-        user=u1, specialty="Cardiologia", license_number="L1", contact_phone="8095550001"
+        user=u1, license_number="L1-CARDIO", contact_phone="8095550001"
     )
     DoctorProfile.objects.create(
-        user=u2, specialty="Pediatria", license_number="L2", contact_phone="8095550002"
+        user=u2, license_number="L2-PEDI", contact_phone="8095550002"
     )
     res = auth_client(admin_user).get("/api/doctors/profiles/?search=cardio")
-    assert {r["specialty"] for r in res.data["results"]} == {"Cardiologia"}
+    assert {r["license_number"] for r in res.data["results"]} == {"L1-CARDIO"}
     res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-user__last_name")
     assert res.data["results"][0]["full_name"] == "Abe B"
 
@@ -351,7 +350,7 @@ def test_appointments_search_and_ordering(auth_client, admin_user, db, make_user
 
     doc = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     prof = DoctorProfile.objects.create(
-        user=doc, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doc, license_number="L1", contact_phone="8095550001"
     )
     p1 = _patient(first_name="Ana", last_name="Perez", cedula="11100000003", nss="")
     p2 = _patient(first_name="Luis", last_name="Perez", cedula="11100000004", nss="")

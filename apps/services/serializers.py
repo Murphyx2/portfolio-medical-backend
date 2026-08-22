@@ -4,6 +4,16 @@ from apps.core.serializers import CoreModelSerializer
 from apps.services.models import Service, ServiceType
 
 
+class ServiceLiteSerializer(serializers.ModelSerializer):
+    """Compact read-only representation for nesting inside other apps'
+    serializers (e.g. DoctorProfileSerializer.services_detail) -- mirrors
+    encounters' DoctorLiteSerializer pattern."""
+
+    class Meta:
+        model = Service
+        fields = ["id", "name"]
+
+
 class ServiceTypeSerializer(CoreModelSerializer):
     class Meta:
         model = ServiceType

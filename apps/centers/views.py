@@ -1,8 +1,6 @@
 from django.db.models import Count
-from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
@@ -11,28 +9,24 @@ from apps.centers.serializers import (
     DoctorCenterBindingSerializer,
     MedicalCenterSerializer,
 )
-from apps.core.caching import CachedListViewMixin
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdmin, IsAdminOrIT, IsStaffUser
-from apps.core.services import client_ip, log_audit
+from apps.core.permissions import IsAdmin, IsStaffUser
+from apps.core.viewsets import ReferenceDataViewSet
 
 
-class MedicalCenterViewSet(AuditMixin, CachedListViewMixin, viewsets.ModelViewSet):
-    cache_model = "medicalcenter"
+class MedicalCenterViewSet(ReferenceDataViewSet):
+    """Centers are visible to nobody but ADMIN -- every other role, including
+    IT (which could previously write here), is fully excluded, per the
+    decision to hide the Centers page from all non-admin roles."""
+
     queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
-    permission_classes = [IsStaffUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    permission_classes = [IsAdmin]
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrIT]
-        return super().get_permissions()
 
 
 class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -63,11 +57,5 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
         binding.approved = True
         binding.approved_by = request.user
         binding.save()
-        log_audit(
-            user=request.user,
-            action="UPDATE",
-            target=binding,
-            ip_address=client_ip(request),
-            details={"approved": True},
-        )
+        self.log_action(binding, "UPDATE", details={"approved": True})
         return Response(self.get_serializer(binding).data)

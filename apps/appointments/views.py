@@ -1,24 +1,31 @@
 from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
-from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
-from apps.core.mixins import AuditMixin
-from apps.core.permissions import CanDeleteAppointments, CanManageAppointments, IsStaffUser
-from apps.core.services import client_ip, log_audit, user_accessible_center_ids
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
+from apps.core.permissions import (
+    CanCancelAppointment,
+    CanCompleteAppointment,
+    CanDeleteAppointments,
+    CanManageAppointments,
+    IsStaffUser,
+)
+from apps.core.services import scope_queryset
 
 
-class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
+class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Appointment.all_objects.select_related(
-        "patient", "doctor__user", "center", "created_by"
+        "patient", "doctor__user", "center", "service", "created_by"
     )
     serializer_class = AppointmentSerializer
     permission_classes = [IsStaffUser]
+    write_permission_classes = [CanManageAppointments]
+    delete_permission_classes = [CanDeleteAppointments]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = {
         "patient": ["exact"],
@@ -41,64 +48,71 @@ class AppointmentViewSet(AuditMixin, viewsets.ModelViewSet):
         "status",
     ]
 
-    def get_permissions(self):
-        if self.request.method == "DELETE":
-            self.permission_classes = [CanDeleteAppointments]
-        elif self.request.method not in SAFE_METHODS:
-            self.permission_classes = [CanManageAppointments]
-        return super().get_permissions()
-
     def get_queryset(self):
-        qs = super().get_queryset()
-        user = self.request.user
-        if getattr(user, "is_doctor", False):
-            qs = qs.filter(doctor__user=user)
-        return qs
+        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor__user")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        # cancel/complete are custom @action POST routes, so
+        # SwapPermissionsMixin's method-keyed swap (above, via
+        # super().get_permissions()) lands on write_permission_classes for
+        # both -- narrow further per self.action here instead of the inline
+        # self.permission_denied() checks this used to hand-roll.
+        if self.action == "cancel":
+            return [CanCancelAppointment()]
+        if self.action == "complete":
+            return [CanCompleteAppointment()]
+        return permissions
 
     @transaction.atomic
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-        log_audit(
-            user=self.request.user,
-            action="CREATE",
-            target=serializer.instance,
-            ip_address=client_ip(self.request),
-        )
+        self.perform_create_with_owner(serializer, "created_by")
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         appointment = self.get_object()
-        if not (
-            getattr(request.user, "is_receptionist", False)
-            or getattr(request.user, "is_admin", False)
-        ):
-            self.permission_denied(request, message="Only receptionists or admins may cancel.")
+        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+            raise serializers.ValidationError(
+                {"detail": "This appointment is already closed."}
+            )
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            raise serializers.ValidationError(
+                {"reason": "A cancellation reason is required."}
+            )
         appointment.status = Appointment.Status.CANCELLED
-        appointment.save()
-        log_audit(
-            user=request.user,
-            action="UPDATE",
-            target=appointment,
-            ip_address=client_ip(request),
-            details={"status": "CANCELLED"},
-        )
+        appointment.cancel_reason = reason
+        appointment.save(update_fields=["status", "cancel_reason"])
+        self.log_action(appointment, "UPDATE", details={"status": "CANCELLED", "reason": reason})
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         appointment = self.get_object()
-        if not (
-            getattr(request.user, "is_doctor", False)
-            or getattr(request.user, "is_admin", False)
-        ):
-            self.permission_denied(request, message="Only doctors or admins may complete.")
+        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+            raise serializers.ValidationError(
+                {"detail": "This appointment is already closed."}
+            )
         appointment.status = Appointment.Status.COMPLETED
         appointment.save()
-        log_audit(
-            user=request.user,
-            action="UPDATE",
-            target=appointment,
-            ip_address=client_ip(request),
-            details={"status": "COMPLETED"},
-        )
+        self.log_action(appointment, "UPDATE", details={"status": "COMPLETED"})
         return Response(self.get_serializer(appointment).data)
+
+    @action(detail=True, methods=["post"])
+    def reschedule(self, request, pk=None):
+        """Lightweight single-field (date_time only) update, distinct from a
+        full PATCH -- keeps the frontend's Reschedule dialog a one-field
+        form and makes the write intent explicit for permission/audit
+        purposes (same gate as a general edit: CanManageAppointments)."""
+        appointment = self.get_object()
+        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+            raise serializers.ValidationError(
+                {"detail": "This appointment is already closed."}
+            )
+        serializer = self.get_serializer(
+            appointment, data={"date_time": request.data.get("date_time")}, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        self.log_action(appointment, "UPDATE", details={"date_time": serializer.data["date_time"]})
+        return Response(serializer.data)

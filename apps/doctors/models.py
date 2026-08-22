@@ -10,7 +10,6 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
         on_delete=models.CASCADE,
         related_name="doctor_profile",
     )
-    specialty = models.CharField(max_length=150)
     license_number = models.CharField(max_length=50, unique=True)
     contact_phone = models.CharField(max_length=30)
     contact_email = models.EmailField(blank=True)
@@ -29,6 +28,16 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
     # wherever a compact doctor reference is needed, e.g. the Encounters
     # list table. Auto-generated from pk in save() below when left blank.
     code = models.CharField(max_length=12, unique=True, null=True, blank=True)
+    services = models.ManyToManyField(
+        "services.Service", related_name="doctors", blank=True
+    )
+    # Rooms this doctor is available in -- drives the Encounters admission
+    # form's room auto-fill/filtering the same way `services` drives its
+    # service auto-fill/filtering. Distinct related_name from both
+    # `default_room` ("default_for_doctors") and `services` ("doctors").
+    rooms = models.ManyToManyField(
+        "rooms.Room", related_name="assignable_doctors", blank=True
+    )
 
     class Meta:
         ordering = ["user__last_name", "user__first_name"]
@@ -50,7 +59,26 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
         return self.user.get_full_name() or self.user.username
 
     def __str__(self) -> str:
-        return f"{self.full_name} ({self.specialty})"
+        return self.full_name
+
+
+class DoctorPhoneNumber(models.Model):
+    """Additional phone numbers beyond `DoctorProfile.contact_phone` (the
+    primary number, left untouched everywhere it's already read). Plain
+    text, matching contact_phone's own (unencrypted) storage -- doctor
+    contact info isn't treated as PII the way patient data is."""
+
+    doctor = models.ForeignKey(
+        DoctorProfile, on_delete=models.CASCADE, related_name="extra_phones"
+    )
+    phone = models.CharField(max_length=30)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.doctor_id}:{self.phone}"
 
 
 class DoctorSchedule(TimestampedModel, SoftDeleteModel):

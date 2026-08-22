@@ -68,6 +68,7 @@ def apply_masking(
     masked_nulls=(),
     masked_nested=(),
     masked_nested_nulls=(),
+    masked_list=(),
     clinical_fields=(),
     clinical_nested=(),
 ):
@@ -78,6 +79,9 @@ def apply_masking(
       to None for masked roles.
     - ``masked_nested`` / ``masked_nested_nulls``: ``(field, (sub, ...))``
       tuples -- subfields inside a nested dict (e.g. ``patient_info``).
+    - ``masked_list``: ``(field, (sub, ...))`` tuples -- subfields inside
+      each dict of a *list* field (e.g. ``extra_phones``), same shape as
+      ``clinical_nested`` but gated on ``is_masked_role`` instead.
     - ``clinical_fields`` / ``clinical_nested``: free-text narrative fields
       redacted for non-clinical roles (``clinical_nested`` targets a list of
       dicts, e.g. encounter diagnoses).
@@ -86,6 +90,11 @@ def apply_masking(
     if user and is_masked_role(user):
         _apply_mask_plan(data, user, masked_fields, masked_nulls)
         _apply_mask_plan_nested(data, user, masked_nested, masked_nested_nulls)
+        for field, subs in masked_list:
+            for item in data.get(field) or []:
+                for sub in subs:
+                    if item.get(sub):
+                        item[sub] = mask(str(item[sub]))
     if user and not is_clinical_role(user):
         for field in clinical_fields:
             if data.get(field):
@@ -100,7 +109,7 @@ def apply_masking(
 
 def mask_doctor_contact(data, user, instance):
     """M-03: doctor contact PII is only for admins/IT and the doctor themself;
-    other staff keep name/specialty but see masked contact. Exception:
+    other staff keep name/services but see masked contact. Exception:
     receptionists need unmasked phone/email to coordinate appointments, but
     license_number/bio stay hidden from them too."""
     is_self = bool(user and getattr(instance, "user_id", None) == getattr(user, "id", None))
@@ -113,5 +122,8 @@ def mask_doctor_contact(data, user, instance):
             data["contact_phone"] = mask(str(data["contact_phone"]))
         if data.get("contact_email"):
             data["contact_email"] = mask(str(data["contact_email"]))
+        for phone_row in data.get("extra_phones") or []:
+            if phone_row.get("phone"):
+                phone_row["phone"] = mask(str(phone_row["phone"]))
     data["bio"] = None
     return data

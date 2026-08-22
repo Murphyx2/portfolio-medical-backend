@@ -17,6 +17,7 @@ Security invariants under test:
   Django admin — not tied to the DRF-only AuditMixin hook.
 """
 
+import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
@@ -25,7 +26,8 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
-from apps.rooms.models import RoomType
+from apps.rooms.models import Room, RoomType
+from apps.services.models import Service, ServiceType
 
 
 def _query_count(client, url):
@@ -139,6 +141,58 @@ def test_ars_list_cached_and_invalidated(auth_client, admin_user, db):
     assert client.get("/api/ars/").data["count"] == baseline + 1
 
 
+def test_room_list_cached_and_invalidated(auth_client, admin_user, db):
+    center = MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000"
+    )
+    room_type = RoomType.objects.create(name="Consultorio")
+    client = auth_client(admin_user)
+    res1, n1 = _query_count(client, "/api/rooms/")
+    assert n1 > 0
+    res2, n2 = _query_count(client, "/api/rooms/")
+    assert n2 == 0
+    assert res2.data["count"] == res1.data["count"]
+
+    room = Room.objects.create(code="R1", name="Room 1", center=center, room_type=room_type)
+    assert client.get("/api/rooms/").data["count"] == res1.data["count"] + 1
+
+    room.delete()
+    assert client.get("/api/rooms/").data["count"] == res1.data["count"]
+
+
+def test_service_type_list_cached_and_invalidated(auth_client, admin_user, db):
+    client = auth_client(admin_user)
+    res1, n1 = _query_count(client, "/api/service-types/")
+    assert n1 > 0
+    res2, n2 = _query_count(client, "/api/service-types/")
+    assert n2 == 0
+    assert res2.data["count"] == res1.data["count"]
+
+    st = ServiceType.objects.create(name="Laboratorio")
+    assert client.get("/api/service-types/").data["count"] == res1.data["count"] + 1
+
+    st.delete()
+    assert client.get("/api/service-types/").data["count"] == res1.data["count"]
+
+
+def test_service_list_cached_and_invalidated(auth_client, admin_user, db):
+    service_type = ServiceType.objects.create(name="Laboratorio")
+    client = auth_client(admin_user)
+    res1, n1 = _query_count(client, "/api/services/")
+    assert n1 > 0
+    res2, n2 = _query_count(client, "/api/services/")
+    assert n2 == 0
+    assert res2.data["count"] == res1.data["count"]
+
+    service = Service.objects.create(
+        simon="100001", name="Lab test", type=service_type, co_pago=0, privado=0
+    )
+    assert client.get("/api/services/").data["count"] == res1.data["count"] + 1
+
+    service.delete()
+    assert client.get("/api/services/").data["count"] == res1.data["count"]
+
+
 def test_doctor_center_binding_approval_invalidates_center_list_cache(
     auth_client, admin_user, doctor_user, db
 ):
@@ -148,7 +202,7 @@ def test_doctor_center_binding_approval_invalidates_center_list_cache(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
     profile = DoctorProfile.objects.create(
-        user=doctor_user, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doctor_user, license_number="L1", contact_phone="8095550001"
     )
     client = auth_client(admin_user)
     assert client.get("/api/centers/").data["results"][0]["doctor_count"] == 0
@@ -217,3 +271,28 @@ def test_schema_cache_unreachable_anonymously(auth_client, admin_user, db):
     from rest_framework.test import APIClient
 
     assert APIClient().get("/api/schema/").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# _CACHE_INVALIDATION_MAP / connect_cache_invalidation() must stay in sync
+# ---------------------------------------------------------------------------
+
+
+def test_connect_cache_invalidation_raises_on_unknown_map_key():
+    """B5 regression guard: connect_cache_invalidation() derives its signal
+    connections from _CACHE_INVALIDATION_MAP's keys, so a key with no
+    matching model must fail loudly at startup instead of silently leaving
+    that model's writes un-invalidated."""
+    from unittest.mock import patch
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    from apps.core import caching, signals
+
+    bad_map = dict(caching._CACHE_INVALIDATION_MAP)
+    bad_map["not_a_real_model"] = ("medicine",)
+
+    with patch.object(caching, "_CACHE_INVALIDATION_MAP", bad_map):
+        with patch.object(signals, "_CACHE_INVALIDATION_MAP", bad_map):
+            with pytest.raises(ImproperlyConfigured):
+                signals.connect_cache_invalidation()

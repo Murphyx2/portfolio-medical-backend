@@ -4,6 +4,7 @@ from django.test.utils import CaptureQueriesContext
 from apps.ars.models import ARS, ARSProgram
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
+from apps.core.models import AuditLog
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord
@@ -31,6 +32,60 @@ def test_create_patient_by_receptionist(auth_client, receptionist_user):
     assert res.status_code == 201
     patient = Patient.objects.get(pk=res.data["id"])
     assert patient.phone == "8095550100"
+
+
+def test_create_patient_with_extra_phones(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}, {"phone": "8095550300"}]),
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    patient = Patient.objects.get(pk=res.data["id"])
+    assert sorted(p.phone for p in patient.extra_phones.all()) == ["8095550200", "8095550300"]
+    assert sorted(p["phone"] for p in res.data["extra_phones"]) == ["8095550200", "8095550300"]
+
+
+def test_update_patient_replaces_extra_phones(auth_client, receptionist_user):
+    create = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    patient_id = create.data["id"]
+
+    res = auth_client(receptionist_user).patch(
+        f"/api/patients/{patient_id}/",
+        {"extra_phones": [{"phone": "8095550400"}]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    patient = Patient.objects.get(pk=patient_id)
+    assert [p.phone for p in patient.extra_phones.all()] == ["8095550400"]
+
+
+def test_extra_phones_encrypted_at_rest(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT phone FROM patients_patientphonenumber LIMIT 1")
+        (raw_phone,) = cursor.fetchone()
+    assert is_encrypted(raw_phone)
+    assert "8095550200" not in raw_phone
+
+
+def test_extra_phones_masked_for_it_role(auth_client, receptionist_user, it_user):
+    auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    res = auth_client(it_user).get("/api/patients/")
+    row = res.data["results"][0]
+    assert row["extra_phones"][0]["phone"] != "8095550200"
 
 
 def test_patient_pii_is_encrypted_at_rest(auth_client, receptionist_user):
@@ -200,15 +255,13 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
 def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
     auth_client, doctor_user, db
 ):
-    # Doctor-scoping used to be a join + .distinct(); with multiple
-    # MedicalRecords for the same center-bound patient, a join would have
-    # produced duplicate rows (masked by .distinct()). The Exists() subquery
-    # scoping doesn't join at all, so there's nothing to de-duplicate.
+    # PatientViewSet doesn't join medical_records at all, so multiple
+    # MedicalRecords for the same patient can't produce duplicate rows here.
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
     profile = DoctorProfile.objects.create(
-        user=doctor_user, specialty="GP", license_number="L1", contact_phone="8095550001"
+        user=doctor_user, license_number="L1", contact_phone="8095550001"
     )
     DoctorCenterBinding.objects.create(
         doctor=profile, center=center, approved=True, approved_by=doctor_user
@@ -260,3 +313,18 @@ def test_creating_patient_auto_creates_placeholder_record(auth_client, reception
     assert record.title == "Registro inicial"
     assert "Penicillin" in record.notes
     assert record.diagnosis == ""
+
+
+def test_creating_patient_audits_placeholder_record_creation(auth_client, receptionist_user):
+    """B7 regression guard: create_initial_record (apps/records/services.py)
+    now goes through log_audit -- previously this was a raw MedicalRecord
+    .create() call inside PatientViewSet.perform_create with no
+    corresponding AuditLog row."""
+    res = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(), format="json"
+    )
+    assert res.status_code == 201, res.data
+    record = MedicalRecord.objects.get(patient_id=res.data["id"])
+    assert AuditLog.objects.filter(
+        target_type="MedicalRecord", target_id=record.id, action="CREATE"
+    ).exists()

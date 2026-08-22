@@ -63,6 +63,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -115,8 +116,12 @@ DATABASES = {
         "HOST": env("POSTGRES_HOST", "db"),
         "PORT": env("POSTGRES_PORT", "5432"),
         # Keep persistent connections alive between requests: saves the TCP +
-        # auth handshake on every list/detail call (5-min max idle).
+        # auth handshake on every list/detail call (60s max idle).
         "CONN_MAX_AGE": 60,
+        # Validate a reused persistent connection before handing it to a
+        # request, so a Postgres restart/idle-drop surfaces as a fresh
+        # reconnect instead of an "server closed the connection" error.
+        "CONN_HEALTH_CHECKS": True,
     }
 }
 
@@ -213,6 +218,18 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Serves collected static assets (admin CSS/JS, DRF browsable API assets) from
+# within the Django process (I3) -- prod nginx has no /static/ filesystem
+# access, only a proxy to backend, so something inside Django must own this.
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"

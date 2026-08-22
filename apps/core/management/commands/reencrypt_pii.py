@@ -61,14 +61,19 @@ class Command(BaseCommand):
                             )
                             continue
                         updates[name] = new_cipher.encrypt(plain.encode()).decode()
-                        if model is Patient and name in ("cedula", "nss"):
+                        if model is Patient and name in Patient.PII_INDEX_FIELDS:
                             # The blind-index key is derived from PII_FIELD_KEY
                             # (settings.PII_FIELD_KEY), so it rotates along with
                             # it -- skipping this would strand pre-rotation
                             # patients' hashes under the old key, breaking
                             # full-number search until each is individually
-                            # re-saved.
-                            updates[f"{name}_hash"] = blind_index_digits(plain)
+                            # re-saved. Reads from Patient.PII_INDEX_FIELDS
+                            # (the same mapping save() uses) instead of a
+                            # hard-coded ("cedula", "nss") tuple, which used
+                            # to silently skip guardian_cedula_hash.
+                            _, hash_field = Patient.PII_INDEX_FIELDS[name]
+                            if hash_field:
+                                updates[hash_field] = blind_index_digits(plain)
                     if updates:
                         set_clause = ", ".join(f"{n} = %s" for n in updates)
                         cursor.execute(

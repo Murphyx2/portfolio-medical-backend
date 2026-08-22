@@ -31,6 +31,16 @@ class Appointment(TimestampedModel, SoftDeleteModel):
         blank=True,
         related_name="appointments",
     )
+    # Nullable at the DB level (so existing rows never need a backfill);
+    # the New/Edit Appointment form always collects one, enforced at the
+    # serializer layer rather than here.
+    service = models.ForeignKey(
+        "services.Service",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="appointments",
+    )
     date_time = models.DateTimeField()
     duration_minutes = models.PositiveSmallIntegerField(default=30)
     status = models.CharField(
@@ -39,6 +49,10 @@ class Appointment(TimestampedModel, SoftDeleteModel):
         default=Status.SCHEDULED,
     )
     notes = models.TextField(blank=True)
+    # Required (enforced in the `cancel` action, not here) when an
+    # appointment is cancelled -- blank=True so the field itself stays
+    # optional at the model/DB level for every other status.
+    cancel_reason = models.CharField(max_length=255, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,

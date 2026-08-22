@@ -51,7 +51,6 @@ def _center(code="C1"):
 def _doctor_profile(user, license_suffix=None):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=f"LIC-{license_suffix or user.id}",
         contact_phone="8095550000",
         contact_email="doc@example.com",

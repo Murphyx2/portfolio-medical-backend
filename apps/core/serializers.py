@@ -8,6 +8,7 @@ inherit both and drop their private copies.
 
 from rest_framework import serializers
 
+from apps.core.models import AuditLog
 from apps.core.services import can_view_inactive
 
 
@@ -31,3 +32,21 @@ class CoreModelSerializer(serializers.ModelSerializer):
         if "active" in fields and not can_view_inactive(self._request_user()):
             fields["active"].read_only = True
         return fields
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    """Read-only view of a user's audit trail (see accounts UserViewSet's
+    ``activity`` action)."""
+
+    class Meta:
+        model = AuditLog
+        fields = ["id", "action", "target_type", "target_id", "ip_address", "details", "created_at"]
+        read_only_fields = fields
+
+
+def full_name_or_username(user) -> str:
+    """Shared body for the ``get_created_by_name``/``get_doctor_name``
+    SerializerMethodFields repeated across records/appointments/encounters
+    serializers -- always masked (``masked_fields=("created_by_name",)`` or
+    similarly named) wherever it appears."""
+    return user.get_full_name() or user.username

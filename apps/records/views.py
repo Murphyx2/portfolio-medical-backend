@@ -7,16 +7,14 @@ from django.http import FileResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
 from rest_framework.filters import OrderingFilter
-from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.mixins import AuditMixin
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanManageRecords,
-    IsStaffUser,
+    IsAdminDoctorOrNurse,
 )
-from apps.core.services import client_ip, log_audit, scope_queryset
 from apps.records.filters import RecordSearchFilter
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
@@ -26,90 +24,46 @@ from apps.records.serializers import (
 )
 
 
-class MedicalRecordViewSet(AuditMixin, viewsets.ModelViewSet):
+class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = MedicalRecord.all_objects.select_related(
         "patient", "created_by", "center"
     ).prefetch_related("images")
     serializer_class = MedicalRecordSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [CanManageRecords]
     filter_backends = [DjangoFilterBackend, RecordSearchFilter, OrderingFilter]
     filterset_fields = ["patient", "center", "title"]
     ordering_fields = ["date", "title", "patient__search_name", "created_by__username"]
 
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [CanManageRecords]
-        return super().get_permissions()
-
-    def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="created_by")
-
     @transaction.atomic
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-        log_audit(
-            user=self.request.user,
-            action="CREATE",
-            target=serializer.instance,
-            ip_address=client_ip(self.request),
-        )
+        self.perform_create_with_owner(serializer, "created_by")
 
 
-class ConsultationLogViewSet(AuditMixin, viewsets.ModelViewSet):
+class ConsultationLogViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = ConsultationLog.all_objects.select_related("patient", "doctor", "center")
     serializer_class = ConsultationLogSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [CanManageRecords]
     filterset_fields = ["patient", "center", "doctor"]
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [CanManageRecords]
-        return super().get_permissions()
-
-    def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor")
 
     @transaction.atomic
     def perform_create(self, serializer):
-        serializer.save(doctor=self.request.user)
-        log_audit(
-            user=self.request.user,
-            action="CREATE",
-            target=serializer.instance,
-            ip_address=client_ip(self.request),
-        )
+        self.perform_create_with_owner(serializer, "doctor")
 
 
-class RecordImageViewSet(AuditMixin, viewsets.ModelViewSet):
+class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = RecordImage.all_objects.select_related("record", "uploaded_by").order_by(
         "-created_at"
     )
     serializer_class = RecordImageSerializer
-    permission_classes = [IsStaffUser]
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [CanManageRecords]
     filterset_fields = ["record"]
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [CanManageRecords]
-        return super().get_permissions()
-
-    def get_queryset(self):
-        return scope_queryset(
-            super().get_queryset(),
-            self.request.user,
-            center_field="record__center",
-            owner_field="record__created_by",
-        )
 
     @transaction.atomic
     def perform_create(self, serializer):
-        serializer.save(uploaded_by=self.request.user)
-        log_audit(
-            user=self.request.user,
-            action="CREATE",
-            target=serializer.instance,
-            ip_address=client_ip(self.request),
-        )
+        self.perform_create_with_owner(serializer, "uploaded_by")
 
 
 class ProtectedMediaView(APIView):

@@ -33,7 +33,6 @@ def _make_center(code="C1", name="Center 1"):
 def _make_profile(user, license_number=None):
     return DoctorProfile.objects.create(
         user=user,
-        specialty="Cardiology",
         license_number=license_number or f"LIC-{user.id}",
         contact_phone="555-0000",
     )
@@ -82,7 +81,11 @@ def test_search_name_populated_and_searchable(auth_client, receptionist_user):
 # M-02: patient center scoping for doctors
 # ---------------------------------------------------------------------------
 
-def test_doctor_sees_centerless_and_own_center_not_foreign(auth_client, make_user):
+def test_doctor_sees_patients_across_all_centers(auth_client, make_user):
+    # Doctors have unrestricted patient-list visibility (matching their
+    # already-unrestricted access to medical records via CanManageRecords) --
+    # this was an intentional policy change away from center-scoped
+    # visibility, see PatientViewSet.get_queryset().
     doc = make_user("doc", "DOCTOR")
     center = _make_center("C1", "My Center")
     other = _make_center("C2", "Other Center")
@@ -97,10 +100,10 @@ def test_doctor_sees_centerless_and_own_center_not_foreign(auth_client, make_use
     ids = {row["id"] for row in res.data["results"]}
     assert unbound.id in ids
     assert own.id in ids
-    assert foreign.id not in ids
+    assert foreign.id in ids
 
     assert client.get(f"/api/patients/{own.id}/").status_code == 200
-    assert client.get(f"/api/patients/{foreign.id}/").status_code == 404
+    assert client.get(f"/api/patients/{foreign.id}/").status_code == 200
 
 
 def test_receptionist_sees_all_patients(auth_client, receptionist_user):
@@ -114,10 +117,14 @@ def test_receptionist_sees_all_patients(auth_client, receptionist_user):
 
 
 # ---------------------------------------------------------------------------
-# M-03: doctor writes rejected for out-of-scope patients / records
+# M-03: doctor writes rejected for out-of-scope patients (still enforced for
+# apps other than records -- records scoping was intentionally removed, see
+# CanManageRecords/apps.records.serializers).
 # ---------------------------------------------------------------------------
 
-def test_doctor_record_for_foreign_patient_rejected(auth_client, make_user):
+def test_doctor_record_for_foreign_patient_allowed(auth_client, make_user):
+    # Records are not scoped to a doctor's approved centers -- a record for
+    # a patient at a center the doctor isn't bound to is allowed.
     doc = make_user("doc", "DOCTOR")
     center = _make_center("C1")
     other = _make_center("C2")
@@ -129,8 +136,7 @@ def test_doctor_record_for_foreign_patient_rejected(auth_client, make_user):
         {"patient": foreign.id, "title": "t", "diagnosis": "d", "center": center.id},
         format="json",
     )
-    assert res.status_code == 400
-    assert "patient" in res.data
+    assert res.status_code == 201, res.data
 
 
 def test_doctor_record_for_centerless_patient_ok(auth_client, make_user):
@@ -147,7 +153,8 @@ def test_doctor_record_for_centerless_patient_ok(auth_client, make_user):
     assert res.status_code == 201, res.data
 
 
-def test_doctor_image_for_foreign_record_rejected(auth_client, make_user):
+def test_doctor_image_for_foreign_record_allowed(auth_client, make_user):
+    # Record images inherit the same unscoped access as their parent record.
     doc = make_user("doc", "DOCTOR")
     other_doc = make_user("other", "DOCTOR")
     center = _make_center("C1")
@@ -171,11 +178,10 @@ def test_doctor_image_for_foreign_record_rejected(auth_client, make_user):
         {"record": foreign_record.id, "image": upload, "caption": "x"},
         format="multipart",
     )
-    assert res.status_code == 400
-    assert "record" in res.data
+    assert res.status_code == 201, res.data
 
 
-def test_record_image_list_scoped_for_doctor(auth_client, make_user):
+def test_record_image_list_is_unscoped_for_doctor(auth_client, make_user):
     doc = make_user("doc", "DOCTOR")
     other_doc = make_user("other", "DOCTOR")
     center = _make_center("C1")
@@ -198,7 +204,7 @@ def test_record_image_list_scoped_for_doctor(auth_client, make_user):
     res = auth_client(doc).get("/api/images/")
     ids = {row["id"] for row in res.data["results"]}
     assert own_img.id in ids
-    assert other_img.id not in ids
+    assert other_img.id in ids
 
 
 # ---------------------------------------------------------------------------

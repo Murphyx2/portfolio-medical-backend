@@ -9,9 +9,9 @@ from rest_framework import serializers
 from apps.core.encryption import blind_index_digits
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import can_write_center, program_belongs_to_ars
 from apps.core.validators import validate_phone
-from apps.patients.filters import patient_age
-from apps.patients.models import Patient
+from apps.patients.models import Patient, PatientPhoneNumber, patient_age
 
 # validate() only re-checks cedula/guardian requiredness when one of these
 # keys is present in the incoming attrs (or on create) -- otherwise a PATCH
@@ -29,6 +29,81 @@ _GUARDIAN_TRIGGER_KEYS = (
 )
 
 
+def _normalize_cedula_digits(value: str, *, field_label: str = "Cedula") -> str:
+    """Shared by validate_cedula/validate_guardian_cedula. Strips separators
+    from the formatted display form (e.g. "001-1234567-8") rather than
+    requiring a pure digit string -- unlike NSS below, cedula input commonly
+    carries dashes.
+    """
+    digits = re.sub(r"\D", "", str(value))
+    if len(digits) != 11:
+        raise serializers.ValidationError(f"{field_label} must contain exactly 11 digits.")
+    return digits
+
+
+def _normalize_nss_digits(value: str, *, field_label: str = "NSS") -> str:
+    """Shared by validate_nss/validate_guardian_nss. NFKC folds fullwidth/
+    halfwidth forms into ASCII (e.g. "１２３" -> "123"); anything that does
+    not fold to ASCII digits (letters, symbols, dashes, other scripts) is
+    rejected rather than stripped.
+    """
+    normalized = unicodedata.normalize("NFKC", str(value))
+    if not normalized.isascii() or not normalized.isdigit():
+        raise serializers.ValidationError(f"{field_label} must contain digits only.")
+    if len(normalized) > 11:
+        raise serializers.ValidationError(f"{field_label} must be at most 11 digits.")
+    return normalized
+
+
+class PatientSummarySerializer(serializers.ModelSerializer):
+    """Canonical base for cross-app "lite"/"summary" patient nesting
+    (records/appointments/encounters each used to declare their own
+    independent copy with a different field subset). Consumers subclass and
+    override ``Meta.fields`` to their own subset -- this centralizes the
+    ``full_name``/``age`` declared fields and the ``patient_age`` call so a
+    new field only needs `.get_age`/normalization logic written once, while
+    each consumer keeps exactly the (narrower) field set it exposed before
+    (deliberately not widened to the full union here: that would expose more
+    PHI per response than each endpoint needs, even though masking still
+    applies to what's returned -- see apply_masking() call sites in each
+    subclass's owning serializer for the masked subset of *its* fields).
+    """
+
+    full_name = serializers.ReadOnlyField()
+    age = serializers.SerializerMethodField()
+    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
+
+    class Meta:
+        model = Patient
+        fields = [
+            "id",
+            "full_name",
+            "age",
+            "gender",
+            "cedula",
+            "nss",
+            "allergies",
+            "critical_conditions",
+            "ars",
+            "ars_name",
+            "ars_program",
+            "has_guardian",
+            "guardian_cedula",
+        ]
+
+    def get_age(self, obj) -> int | None:
+        return patient_age(obj)
+
+
+class PatientPhoneNumberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientPhoneNumber
+        fields = ["id", "phone"]
+
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
+
+
 class PatientSerializer(CoreModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
@@ -38,6 +113,10 @@ class PatientSerializer(CoreModelSerializer):
     )
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
     center_code = serializers.CharField(source="center.code", read_only=True, default=None)
+    # Additional phone numbers beyond the primary `phone` field -- write side
+    # replaces the full set on every save (delete-and-recreate), matching
+    # the simplicity of the rest of this serializer's flat-field shape.
+    extra_phones = PatientPhoneNumberSerializer(many=True, required=False)
 
     class Meta:
         model = Patient
@@ -53,6 +132,7 @@ class PatientSerializer(CoreModelSerializer):
             "center_name",
             "center_code",
             "phone",
+            "extra_phones",
             "address",
             "email",
             "cedula",
@@ -74,6 +154,25 @@ class PatientSerializer(CoreModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    def create(self, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        patient = super().create(validated_data)
+        if extra_phones:
+            PatientPhoneNumber.objects.bulk_create(
+                PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
+            )
+        return patient
+
+    def update(self, instance, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        patient = super().update(instance, validated_data)
+        if extra_phones is not None:
+            patient.extra_phones.all().delete()
+            PatientPhoneNumber.objects.bulk_create(
+                PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
+            )
+        return patient
 
     def get_fields(self):
         fields = super().get_fields()
@@ -108,11 +207,7 @@ class PatientSerializer(CoreModelSerializer):
 
     def validate_cedula(self, value: str) -> str:
         if value:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) != 11:
-                raise serializers.ValidationError(
-                    "Cedula must contain exactly 11 digits."
-                )
+            digits = _normalize_cedula_digits(value)
             self._check_unique_digits(
                 "cedula", digits, "A patient with this cedula already exists."
             )
@@ -147,14 +242,7 @@ class PatientSerializer(CoreModelSerializer):
     def validate_nss(self, value: str) -> str:
         if not value:
             return value
-        # NFKC folds fullwidth/halfwidth forms into ASCII (e.g. "１２３" -> "123");
-        # anything that does not fold to ASCII digits (letters, symbols, other
-        # scripts) is rejected, and at most 11 digits are allowed.
-        normalized = unicodedata.normalize("NFKC", str(value))
-        if not normalized.isascii() or not normalized.isdigit():
-            raise serializers.ValidationError("NSS must contain digits only.")
-        if len(normalized) > 11:
-            raise serializers.ValidationError("NSS must be at most 11 digits.")
+        normalized = _normalize_nss_digits(value)
         self._check_unique_digits(
             "nss", normalized, "A patient with this NSS already exists."
         )
@@ -162,23 +250,13 @@ class PatientSerializer(CoreModelSerializer):
 
     def validate_guardian_cedula(self, value: str) -> str:
         if value:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) != 11:
-                raise serializers.ValidationError(
-                    "Guardian cedula must contain exactly 11 digits."
-                )
-            return digits
+            return _normalize_cedula_digits(value, field_label="Guardian cedula")
         return value
 
     def validate_guardian_nss(self, value: str) -> str:
         if not value:
             return value
-        normalized = unicodedata.normalize("NFKC", str(value))
-        if not normalized.isascii() or not normalized.isdigit():
-            raise serializers.ValidationError("Guardian NSS must contain digits only.")
-        if len(normalized) > 11:
-            raise serializers.ValidationError("Guardian NSS must be at most 11 digits.")
-        return normalized
+        return _normalize_nss_digits(value, field_label="Guardian NSS")
 
     def validate_guardian_phone(self, value: str) -> str:
         return validate_phone(value)
@@ -188,7 +266,7 @@ class PatientSerializer(CoreModelSerializer):
         if ars is None and self.instance is not None:
             ars = self.instance.ars
         program = attrs.get("ars_program")
-        if ars is not None and program is not None and program.ars_id != ars.id:
+        if not program_belongs_to_ars(ars, program):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
             )
@@ -196,13 +274,10 @@ class PatientSerializer(CoreModelSerializer):
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         center = attrs.get("center")
-        if user and getattr(user, "is_doctor", False) and center is not None:
-            from apps.core.services import user_accessible_center_ids
-
-            if center.id not in user_accessible_center_ids(user):
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
+        if user and center is not None and not can_write_center(user, center):
+            raise serializers.ValidationError(
+                {"center": "You are not approved to work at this center."}
+            )
 
         # Cedula/guardian requiredness is only re-checked when the request is
         # a create or actually touches one of the relevant fields -- otherwise
@@ -270,4 +345,5 @@ class PatientSerializer(CoreModelSerializer):
                 "birth_date",
             ),
             masked_nulls=("age",),
+            masked_list=(("extra_phones", ("phone",)),),
         )

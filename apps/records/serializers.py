@@ -1,37 +1,22 @@
 from io import BytesIO
 
-from django.db.models import Q
 from PIL import Image
 from rest_framework import serializers
 
-from apps.centers.models import DoctorCenterBinding
 from apps.core.masking import apply_masking
-from apps.core.serializers import CoreModelSerializer
-from apps.core.services import sign_media_token, user_accessible_center_ids
-from apps.patients.models import Patient
+from apps.core.serializers import CoreModelSerializer, full_name_or_username
+from apps.core.services import sign_media_token
+from apps.patients.serializers import PatientSummarySerializer
 from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
 
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
 
 
-def _validate_patient_scope(context, attrs, user, instance):
-    """Doctors may only write records for patients not bound to other centers."""
-    if not user or not getattr(user, "is_doctor", False):
-        return
-    patient = attrs.get("patient") or (instance.patient if instance else None)
-    if patient is None:
-        return
-    if patient.center_id is not None and patient.center_id not in user_accessible_center_ids(user):
-        raise serializers.ValidationError(
-            {"patient": "The patient is not in your accessible centers."}
-        )
-
-
-class PatientLiteSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
-
-    class Meta:
-        model = Patient
+class PatientLiteSerializer(PatientSummarySerializer):
+    # Masked subset (see MedicalRecordSerializer/ConsultationLogSerializer's
+    # apply_masking(masked_nested=(("patient_info", (...)),)) below):
+    # full_name, cedula, nss.
+    class Meta(PatientSummarySerializer.Meta):
         fields = ["id", "full_name", "gender", "cedula", "nss"]
 
 
@@ -63,19 +48,6 @@ class RecordImageSerializer(CoreModelSerializer):
         if format_name not in ALLOWED_IMAGE_FORMATS:
             raise serializers.ValidationError("Unsupported image format.")
         return value
-
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        record = attrs.get("record")
-        if user and getattr(user, "is_doctor", False) and record is not None:
-            center_ids = user_accessible_center_ids(user)
-            if not MedicalRecord.objects.filter(pk=record.pk).filter(
-                Q(center_id__in=center_ids) | Q(created_by=user)
-            ).exists():
-                raise serializers.ValidationError(
-                    {"record": "The record is not in your scope."}
-                )
-        return attrs
 
     def get_image_url(self, obj):
         if not obj.image:
@@ -115,21 +87,7 @@ class MedicalRecordSerializer(CoreModelSerializer):
         read_only_fields = ["id", "created_by", "date"]
 
     def get_created_by_name(self, obj):
-        return obj.created_by.get_full_name() or obj.created_by.username
-
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        center = attrs.get("center")
-        if user and center is not None:
-            user_obj = self.context["request"].user
-            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
-                doctor__user=user_obj, center=center, approved=True
-            ).exists():
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
-        _validate_patient_scope(self.context, attrs, user, self.instance)
-        return attrs
+        return full_name_or_username(obj.created_by)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -168,21 +126,7 @@ class ConsultationLogSerializer(CoreModelSerializer):
         read_only_fields = ["id", "doctor", "date"]
 
     def get_doctor_name(self, obj):
-        return obj.doctor.get_full_name() or obj.doctor.username
-
-    def validate(self, attrs):
-        user = getattr(self.context.get("request"), "user", None)
-        center = attrs.get("center")
-        if user and center is not None:
-            user_obj = self.context["request"].user
-            if getattr(user_obj, "is_doctor", False) and not DoctorCenterBinding.objects.filter(
-                doctor__user=user_obj, center=center, approved=True
-            ).exists():
-                raise serializers.ValidationError(
-                    {"center": "You are not approved to work at this center."}
-                )
-        _validate_patient_scope(self.context, attrs, user, self.instance)
-        return attrs
+        return full_name_or_username(obj.doctor)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
