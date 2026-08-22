@@ -13,6 +13,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord
+from apps.services.models import Service, ServiceType
 
 
 def _make_patient():
@@ -23,6 +24,13 @@ def _make_patient():
         phone="555-0100",
         address="123 Main St",
         email="jane@example.com",
+    )
+
+
+def _make_service():
+    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    return Service.objects.create(
+        simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )
 
 
@@ -75,12 +83,14 @@ def test_doctor_can_book_appointment_for_own_profile(
 ):
     profile = _make_doctor(doctor_user)
     patient = _make_patient()
+    service = _make_service()
 
     res = auth_client(doctor_user).post(
         "/api/appointments/",
         {
             "patient": patient.id,
             "doctor": profile.id,
+            "service": service.id,
             "date_time": "2026-08-10T09:00:00Z",
         },
         format="json",

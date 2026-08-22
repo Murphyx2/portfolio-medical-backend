@@ -4,6 +4,7 @@ from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
 from apps.records.models import ConsultationLog, MedicalRecord
+from apps.services.models import Service, ServiceType
 
 
 def _make_patient(receptionist_user):
@@ -22,6 +23,13 @@ def _make_doctor(user):
         user=user,
         license_number=f"LIC-{user.id}",
         contact_phone="555-0000",
+    )
+
+
+def _make_service():
+    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    return Service.objects.create(
+        simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )
 
 
@@ -153,16 +161,18 @@ def test_appointment_created_by_receptionist(
 ):
     patient = _make_patient(receptionist_user)
     doctor = _make_doctor(doctor_user)
+    service = _make_service()
     res = auth_client(receptionist_user).post(
         "/api/appointments/",
         {
             "patient": patient.id,
             "doctor": doctor.id,
+            "service": service.id,
             "date_time": "2026-08-10T09:00:00Z",
         },
         format="json",
     )
-    assert res.status_code == 201
+    assert res.status_code == 201, res.data
     appt = Appointment.objects.get()
     assert appt.created_by == receptionist_user
 
@@ -172,11 +182,13 @@ def test_nurse_can_create_appointment(auth_client, nurse_user, receptionist_user
     # DOCTOR/RECEPTIONIST/ADMIN.
     patient = _make_patient(receptionist_user)
     doctor = _make_doctor(doctor_user)
+    service = _make_service()
     res = auth_client(nurse_user).post(
         "/api/appointments/",
         {
             "patient": patient.id,
             "doctor": doctor.id,
+            "service": service.id,
             "date_time": "2026-08-10T09:00:00Z",
         },
         format="json",
@@ -346,9 +358,109 @@ def test_cancel_appointment_forbidden_for_it(
         date_time="2026-08-10T09:00:00Z",
         created_by=receptionist_user,
     )
-    res = auth_client(it_user).post(f"/api/appointments/{appt.id}/cancel/")
+    res = auth_client(it_user).post(f"/api/appointments/{appt.id}/cancel/", {"reason": "Patient request"}, format="json")
     assert res.status_code in (401, 403)
-    res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/cancel/")
-    assert res.status_code == 200
+    res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/cancel/", {"reason": "Patient request"}, format="json")
+    assert res.status_code == 200, res.data
     appt.refresh_from_db()
     assert appt.status == Appointment.Status.CANCELLED
+    assert appt.cancel_reason == "Patient request"
+
+
+def test_cancel_appointment_requires_non_empty_reason(
+    auth_client, receptionist_user, doctor_user
+):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2026-08-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/cancel/", {}, format="json")
+    assert res.status_code == 400, res.data
+    res = auth_client(receptionist_user).post(
+        f"/api/appointments/{appt.id}/cancel/", {"reason": "   "}, format="json"
+    )
+    assert res.status_code == 400, res.data
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.SCHEDULED
+
+
+def test_create_appointment_requires_service(auth_client, receptionist_user, doctor_user):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    res = auth_client(receptionist_user).post(
+        "/api/appointments/",
+        {"patient": patient.id, "doctor": doctor.id, "date_time": "2026-08-10T09:00:00Z"},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    assert "service" in res.data
+
+
+def test_create_appointment_defaults_center_to_org_default(
+    auth_client, receptionist_user, doctor_user
+):
+    MedicalCenter.objects.create(
+        name="Central", code="C1", address="Addr", phone="8095550000", is_default=True
+    )
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    service = _make_service()
+    res = auth_client(receptionist_user).post(
+        "/api/appointments/",
+        {
+            "patient": patient.id,
+            "doctor": doctor.id,
+            "service": service.id,
+            "date_time": "2026-08-10T09:00:00Z",
+        },
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["center_name"] == "Central"
+
+
+def test_reschedule_appointment_updates_date_time_only(
+    auth_client, receptionist_user, doctor_user
+):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2026-08-10T09:00:00Z",
+        duration_minutes=45,
+        created_by=receptionist_user,
+    )
+    res = auth_client(receptionist_user).post(
+        f"/api/appointments/{appt.id}/reschedule/",
+        {"date_time": "2026-08-11T10:30:00Z"},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    appt.refresh_from_db()
+    assert appt.date_time.isoformat() == "2026-08-11T10:30:00+00:00"
+    assert appt.duration_minutes == 45
+
+
+def test_reschedule_forbidden_for_closed_appointment(
+    auth_client, receptionist_user, doctor_user
+):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2026-08-10T09:00:00Z",
+        status=Appointment.Status.CANCELLED,
+        created_by=receptionist_user,
+    )
+    res = auth_client(receptionist_user).post(
+        f"/api/appointments/{appt.id}/reschedule/",
+        {"date_time": "2026-08-11T10:30:00Z"},
+        format="json",
+    )
+    assert res.status_code == 400, res.data

@@ -1,18 +1,24 @@
 from rest_framework import serializers
 
 from apps.appointments.models import Appointment
+from apps.centers.models import MedicalCenter
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import is_own_doctor_relation
 from apps.doctors.serializers import DoctorLiteSerializer as _DoctorLiteBase
 from apps.patients.serializers import PatientSummarySerializer
+from apps.services.serializers import ServiceLiteSerializer
 
 
 class PatientLiteSerializer(PatientSummarySerializer):
     # Masked subset (see AppointmentSerializer's
-    # apply_masking(masked_nested=(("patient_info", (...)),)) below): full_name.
+    # apply_masking(masked_nested=(("patient_info", (...)),)) below):
+    # full_name/phone. `phone` powers the Appointments table's "patient
+    # phone" column -- the primary scalar phone, not extra_phones.
+    phone = serializers.CharField(read_only=True)
+
     class Meta(PatientSummarySerializer.Meta):
-        fields = ["id", "full_name", "gender"]
+        fields = ["id", "full_name", "gender", "phone"]
 
 
 class DoctorLiteSerializer(_DoctorLiteBase):
@@ -24,6 +30,7 @@ class AppointmentSerializer(CoreModelSerializer):
     patient_info = PatientLiteSerializer(source="patient", read_only=True)
     doctor_info = DoctorLiteSerializer(source="doctor", read_only=True)
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
+    service_detail = ServiceLiteSerializer(source="service", read_only=True)
     created_by_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -36,16 +43,30 @@ class AppointmentSerializer(CoreModelSerializer):
             "doctor_info",
             "center",
             "center_name",
+            "service",
+            "service_detail",
             "date_time",
             "duration_minutes",
             "status",
             "notes",
+            "cancel_reason",
             "created_by",
             "created_by_name",
             "created_at",
             "active",
         ]
-        read_only_fields = ["id", "created_by", "created_at"]
+        read_only_fields = ["id", "created_by", "created_at", "cancel_reason"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # `service`/`center` stay nullable at the model/DB level (existing
+        # rows, safe migration), but every new write from the current form
+        # always supplies a service, and center is auto-defaulted in
+        # validate() below rather than required from the client.
+        fields["service"].required = True
+        fields["service"].allow_null = False
+        fields["center"].required = False
+        return fields
 
     def get_created_by_name(self, obj):
         return full_name_or_username(obj.created_by)
@@ -59,11 +80,20 @@ class AppointmentSerializer(CoreModelSerializer):
             )
         return value
 
+    def validate(self, attrs):
+        # center is never collected from the New/Edit Appointment form --
+        # always auto-filled from the org's default center when omitted,
+        # mirroring PatientFormModal's own is_default autofill.
+        if "center" not in attrs or attrs.get("center") is None:
+            if self.instance is None or self.instance.center_id is None:
+                attrs["center"] = MedicalCenter.objects.filter(is_default=True).first()
+        return attrs
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         return apply_masking(
             data,
             self._request_user(),
             masked_fields=("created_by_name", "notes"),
-            masked_nested=(("patient_info", ("full_name",)),),
+            masked_nested=(("patient_info", ("full_name", "phone")),),
         )
