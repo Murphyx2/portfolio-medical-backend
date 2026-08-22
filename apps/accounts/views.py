@@ -9,11 +9,8 @@ from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from rest_framework_simplejwt.serializers import TokenRefreshSerializer
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.serializers import (
     AdminSetPasswordSerializer,
@@ -22,10 +19,14 @@ from apps.accounts.serializers import (
     UserCreateSerializer,
     UserSerializer,
 )
+from apps.accounts.tokens import SettingsRefreshToken as RefreshToken
+from apps.accounts.tokens import SettingsTokenRefreshSerializer
 from apps.core.mixins import AuditMixin
 from apps.core.permissions import IsAdmin, IsAdminOrIT
 from apps.core.serializers import AuditLogSerializer
 from apps.core.services import client_ip, log_audit
+from apps.core.throttling import SettingsLoginRateThrottle
+from apps.systemsettings.services import get_settings
 
 User = get_user_model()
 
@@ -34,7 +35,10 @@ def _set_refresh_cookie(response, refresh):
     response.set_cookie(
         settings.REFRESH_COOKIE_NAME,
         refresh,
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        # Live value (days -> seconds) so a runtime change to the refresh
+        # token lifetime setting is reflected in the cookie's own max_age on
+        # the very next login/refresh, not just the JWT's internal exp claim.
+        max_age=get_settings().refresh_token_lifetime_days * 86400,
         httponly=True,
         secure=settings.REFRESH_COOKIE_SECURE,
         samesite=settings.REFRESH_COOKIE_SAMESITE,
@@ -50,13 +54,9 @@ def _clear_refresh_cookie(response):
     )
 
 
-class LoginThrottle(AnonRateThrottle):
-    scope = "login"
-
-
 class LoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [LoginThrottle]
+    throttle_classes = [SettingsLoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data)
@@ -84,13 +84,23 @@ class LoginView(APIView):
 
         if user is None or not user.check_password(password) or not user.is_active:
             if user is not None and user.is_active:
+                # Read from the runtime-configurable settings singleton;
+                # User.LOCKOUT_THRESHOLD/LOCKOUT_MINUTES remain as the
+                # hardcoded fallback baked into get_settings() itself.
+                lockout_settings = get_settings()
+                threshold = getattr(
+                    lockout_settings, "login_lockout_threshold", User.LOCKOUT_THRESHOLD
+                )
+                lockout_minutes = getattr(
+                    lockout_settings, "login_lockout_minutes", User.LOCKOUT_MINUTES
+                )
                 User.objects.filter(pk=user.pk).update(
                     failed_login_count=F("failed_login_count") + 1
                 )
                 user.refresh_from_db(fields=["failed_login_count"])
-                if user.failed_login_count >= User.LOCKOUT_THRESHOLD:
+                if user.failed_login_count >= threshold:
                     User.objects.filter(pk=user.pk).update(
-                        locked_until=timezone.now() + timedelta(minutes=User.LOCKOUT_MINUTES)
+                        locked_until=timezone.now() + timedelta(minutes=lockout_minutes)
                     )
             log_audit(
                 user=user,
@@ -149,7 +159,7 @@ class CookieTokenRefreshView(APIView):
                 {"detail": "No refresh token cookie present."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        serializer = TokenRefreshSerializer(
+        serializer = SettingsTokenRefreshSerializer(
             data={"refresh": refresh},
             context={"request": request},
         )

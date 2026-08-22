@@ -245,6 +245,14 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
             )
 
     client = auth_client(admin_user)
+    # Prime the SystemSettings cache (apps/systemsettings/services.py) outside
+    # the measured block -- SettingsAnonRateThrottle/SettingsUserRateThrottle
+    # (apps/core/throttling.py) read it on every request, and the first read
+    # after the autouse clear_cache fixture is a cache miss (one extra DB
+    # query) that would otherwise skew this row-count-independent comparison.
+    from apps.systemsettings.services import get_settings
+
+    get_settings()
     _make(1)
     n1, _ = _query_count(client, "/api/patients/?page_size=20")
     _make(4)  # 5 patients total

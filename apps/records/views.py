@@ -6,6 +6,7 @@ from django.db import transaction
 from django.http import FileResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -66,6 +67,21 @@ class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         self.perform_create_with_owner(serializer, "uploaded_by")
 
 
+@api_view(["GET"])
+@permission_classes([IsAdminDoctorOrNurse])
+def upload_limits(request):
+    """``GET /api/records/upload-limits/`` -- exposes just the configured
+    max-image-upload size to any role that can view/upload record images
+    (ADMIN/DOCTOR/NURSE), so the frontend can pre-check a selected file
+    before uploading it. A deliberately narrow read of the SystemSettings
+    singleton: the full ``/api/settings/`` endpoint is ADMIN/IT-only
+    (apps.systemsettings), which doesn't cover doctors/nurses who actually
+    perform uploads."""
+    from apps.systemsettings.services import get_settings
+
+    return Response({"max_image_upload_mb": get_settings().max_image_upload_mb})
+
+
 class ProtectedMediaView(APIView):
     """Serve files under MEDIA_URL only to holders of a short-lived signed token.
 
@@ -80,9 +96,11 @@ class ProtectedMediaView(APIView):
 
     def get(self, request, file_path):
         from apps.core.services import verify_media_token
+        from apps.systemsettings.services import get_settings
 
         token = request.query_params.get("token", "")
-        if not token or not verify_media_token(file_path, token):
+        max_age = get_settings().media_token_ttl_minutes * 60
+        if not token or not verify_media_token(file_path, token, max_age=max_age):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         if not RecordImage.objects.filter(image=file_path).exists():
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)

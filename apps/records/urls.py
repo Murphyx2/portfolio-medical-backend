@@ -5,6 +5,7 @@ from apps.records.views import (
     ConsultationLogViewSet,
     MedicalRecordViewSet,
     RecordImageViewSet,
+    upload_limits,
 )
 
 router = DefaultRouter()
@@ -13,5 +14,6 @@ router.register("consultation-logs", ConsultationLogViewSet, basename="consultat
 router.register("images", RecordImageViewSet, basename="recordimage")
 
 urlpatterns = [
+    path("records/upload-limits/", upload_limits, name="record-upload-limits"),
     path("", include(router.urls)),
 ]

@@ -31,8 +31,11 @@ class RecordImageSerializer(CoreModelSerializer):
     def validate_image(self, value):
         if value is None:
             return value
-        if value.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError("Image must be smaller than 5 MB.")
+        from apps.systemsettings.services import get_settings
+
+        max_mb = get_settings().max_image_upload_mb
+        if value.size > max_mb * 1024 * 1024:
+            raise serializers.ValidationError(f"Image must be smaller than {max_mb} MB.")
         ext = value.name.rsplit(".", 1)[-1].lower() if "." in value.name else ""
         if ext not in {"jpg", "jpeg", "png", "gif", "webp"}:
             raise serializers.ValidationError("Unsupported image format.")

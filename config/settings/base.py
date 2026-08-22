@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "apps.services",
     "apps.rooms",
     "apps.encounters",
+    "apps.systemsettings",
 ]
 
 MIDDLEWARE = [
@@ -99,7 +100,9 @@ AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    # Runtime-configurable minimum (apps.systemsettings) replaces Django's
+    # own MinimumLengthValidator, which only takes a fixed constructor arg.
+    {"NAME": "apps.core.validators.SettingsMinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
@@ -155,9 +158,14 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "PAGE_SIZE": 20,
     "DEFAULT_THROTTLE_CLASSES": (
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        "apps.core.throttling.SettingsAnonRateThrottle",
+        "apps.core.throttling.SettingsUserRateThrottle",
     ),
+    # Fallback only: SettingsAnonRateThrottle/SettingsUserRateThrottle/
+    # SettingsLoginRateThrottle override get_rate() to read the live
+    # SystemSettings singleton instead (apps/core/throttling.py); these
+    # values are what get_settings() itself falls back to if the DB read
+    # fails (apps/systemsettings/services.py's SimpleNamespace fallback).
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/min",
         "user": "300/min",

@@ -67,6 +67,22 @@ class IsAdminOrIT(RoleUnionPermission):
     allowed_roles = (User.Role.ADMIN, User.Role.IT)
 
 
+class IsAdminOrITReadOnly(BasePermission):
+    """System settings (apps.systemsettings): ADMIN gets full read/write,
+    IT is admitted for safe (GET) methods only, every other role is denied
+    entirely -- unlike IsAdminOrIT, IT here can never PATCH."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        if user.role == User.Role.ADMIN:
+            return True
+        if user.role == User.Role.IT:
+            return request.method in SAFE_METHODS
+        return False
+
+
 class IsAdminOrITOrCenterManager(RoleUnionPermission):
     """Doctor profile writes: ADMIN/IT manage the general fields; a
     CENTER_MANAGER is admitted at this view-permission layer too, but
