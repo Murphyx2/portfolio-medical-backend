@@ -34,6 +34,60 @@ def test_create_patient_by_receptionist(auth_client, receptionist_user):
     assert patient.phone == "8095550100"
 
 
+def test_create_patient_with_extra_phones(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}, {"phone": "8095550300"}]),
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    patient = Patient.objects.get(pk=res.data["id"])
+    assert sorted(p.phone for p in patient.extra_phones.all()) == ["8095550200", "8095550300"]
+    assert sorted(p["phone"] for p in res.data["extra_phones"]) == ["8095550200", "8095550300"]
+
+
+def test_update_patient_replaces_extra_phones(auth_client, receptionist_user):
+    create = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    patient_id = create.data["id"]
+
+    res = auth_client(receptionist_user).patch(
+        f"/api/patients/{patient_id}/",
+        {"extra_phones": [{"phone": "8095550400"}]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    patient = Patient.objects.get(pk=patient_id)
+    assert [p.phone for p in patient.extra_phones.all()] == ["8095550400"]
+
+
+def test_extra_phones_encrypted_at_rest(auth_client, receptionist_user):
+    res = auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT phone FROM patients_patientphonenumber LIMIT 1")
+        (raw_phone,) = cursor.fetchone()
+    assert is_encrypted(raw_phone)
+    assert "8095550200" not in raw_phone
+
+
+def test_extra_phones_masked_for_it_role(auth_client, receptionist_user, it_user):
+    auth_client(receptionist_user).post(
+        "/api/patients/",
+        _patient_payload(extra_phones=[{"phone": "8095550200"}]),
+        format="json",
+    )
+    res = auth_client(it_user).get("/api/patients/")
+    row = res.data["results"][0]
+    assert row["extra_phones"][0]["phone"] != "8095550200"
+
+
 def test_patient_pii_is_encrypted_at_rest(auth_client, receptionist_user):
     auth_client(receptionist_user).post("/api/patients/", _patient_payload(), format="json")
     with connection.cursor() as cursor:

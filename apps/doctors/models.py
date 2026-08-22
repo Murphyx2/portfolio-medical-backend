@@ -62,6 +62,25 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
         return self.full_name
 
 
+class DoctorPhoneNumber(models.Model):
+    """Additional phone numbers beyond `DoctorProfile.contact_phone` (the
+    primary number, left untouched everywhere it's already read). Plain
+    text, matching contact_phone's own (unencrypted) storage -- doctor
+    contact info isn't treated as PII the way patient data is."""
+
+    doctor = models.ForeignKey(
+        DoctorProfile, on_delete=models.CASCADE, related_name="extra_phones"
+    )
+    phone = models.CharField(max_length=30)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.doctor_id}:{self.phone}"
+
+
 class DoctorSchedule(TimestampedModel, SoftDeleteModel):
     """Optional presence times of a doctor at a center."""
 

@@ -105,6 +105,29 @@ def test_admin_creates_doctor_profile(auth_client, admin_user, doctor_user):
     assert DoctorProfile.objects.count() == 1
 
 
+def test_admin_creates_doctor_profile_with_extra_phones(auth_client, admin_user, doctor_user):
+    res = auth_client(admin_user).post(
+        "/api/doctors/profiles/",
+        {
+            **_doctor_payload(extra_phones=[{"phone": "8095550111"}, {"phone": "8095550222"}]),
+            "user": doctor_user.id,
+        },
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    profile = DoctorProfile.objects.get(pk=res.data["id"])
+    assert sorted(p.phone for p in profile.extra_phones.all()) == ["8095550111", "8095550222"]
+
+    res = auth_client(admin_user).patch(
+        f"/api/doctors/profiles/{profile.id}/",
+        {"extra_phones": [{"phone": "8095550333"}]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    profile.refresh_from_db()
+    assert [p.phone for p in profile.extra_phones.all()] == ["8095550333"]
+
+
 def test_doctor_sees_only_own_profile(auth_client, admin_user, doctor_user):
     p1 = _create_doctor_profile(doctor_user)
     auth_client(admin_user).post(

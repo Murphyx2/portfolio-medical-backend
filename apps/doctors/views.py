@@ -19,7 +19,7 @@ from apps.doctors.serializers import DoctorProfileSerializer, DoctorScheduleSeri
 class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = (
         DoctorProfile.all_objects.select_related("user", "default_room")
-        .prefetch_related("services")
+        .prefetch_related("services", "extra_phones")
         .all()
     )
     serializer_class = DoctorProfileSerializer

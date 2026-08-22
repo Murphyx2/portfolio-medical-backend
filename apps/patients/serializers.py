@@ -11,7 +11,7 @@ from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
 from apps.core.services import can_write_center, program_belongs_to_ars
 from apps.core.validators import validate_phone
-from apps.patients.models import Patient, patient_age
+from apps.patients.models import Patient, PatientPhoneNumber, patient_age
 
 # validate() only re-checks cedula/guardian requiredness when one of these
 # keys is present in the incoming attrs (or on create) -- otherwise a PATCH
@@ -95,6 +95,15 @@ class PatientSummarySerializer(serializers.ModelSerializer):
         return patient_age(obj)
 
 
+class PatientPhoneNumberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientPhoneNumber
+        fields = ["id", "phone"]
+
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
+
+
 class PatientSerializer(CoreModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
@@ -104,6 +113,10 @@ class PatientSerializer(CoreModelSerializer):
     )
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
     center_code = serializers.CharField(source="center.code", read_only=True, default=None)
+    # Additional phone numbers beyond the primary `phone` field -- write side
+    # replaces the full set on every save (delete-and-recreate), matching
+    # the simplicity of the rest of this serializer's flat-field shape.
+    extra_phones = PatientPhoneNumberSerializer(many=True, required=False)
 
     class Meta:
         model = Patient
@@ -119,6 +132,7 @@ class PatientSerializer(CoreModelSerializer):
             "center_name",
             "center_code",
             "phone",
+            "extra_phones",
             "address",
             "email",
             "cedula",
@@ -140,6 +154,25 @@ class PatientSerializer(CoreModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    def create(self, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        patient = super().create(validated_data)
+        if extra_phones:
+            PatientPhoneNumber.objects.bulk_create(
+                PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
+            )
+        return patient
+
+    def update(self, instance, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        patient = super().update(instance, validated_data)
+        if extra_phones is not None:
+            patient.extra_phones.all().delete()
+            PatientPhoneNumber.objects.bulk_create(
+                PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
+            )
+        return patient
 
     def get_fields(self):
         fields = super().get_fields()
@@ -312,4 +345,5 @@ class PatientSerializer(CoreModelSerializer):
                 "birth_date",
             ),
             masked_nulls=("age",),
+            masked_list=(("extra_phones", ("phone",)),),
         )
