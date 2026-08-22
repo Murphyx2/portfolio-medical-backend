@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 
 
 class User(AbstractUser):
@@ -19,6 +20,21 @@ class User(AbstractUser):
         default=Role.RECEPTIONIST,
         verbose_name="Role",
     )
+
+    # Brute-force lockout (see accounts/views.py::LoginView): incremented on
+    # each failed login, reset on success. Reaching LOCKOUT_THRESHOLD sets
+    # locked_until LOCKOUT_MINUTES into the future; is_locked simply checks
+    # whether that timestamp is still ahead of now, so an expired lock needs
+    # no separate cleanup job.
+    LOCKOUT_THRESHOLD = 5
+    LOCKOUT_MINUTES = 30
+
+    failed_login_count = models.PositiveIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def is_locked(self) -> bool:
+        return bool(self.locked_until and self.locked_until > timezone.now())
 
     def save(self, *args, **kwargs):
         if self.role == self.Role.ADMIN:

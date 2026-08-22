@@ -1,5 +1,9 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db.models import F
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
@@ -12,13 +16,15 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.serializers import (
+    AdminSetPasswordSerializer,
     LoginResponseSerializer,
     LoginSerializer,
     UserCreateSerializer,
     UserSerializer,
 )
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdminOrIT
+from apps.core.permissions import IsAdmin, IsAdminOrIT
+from apps.core.serializers import AuditLogSerializer
 from apps.core.services import client_ip, log_audit
 
 User = get_user_model()
@@ -64,7 +70,28 @@ class LoginView(APIView):
         except User.DoesNotExist:
             user = None
 
+        if user is not None and user.is_locked:
+            log_audit(
+                user=user,
+                action="FAILED_LOGIN",
+                ip_address=client_ip(request),
+                details={"username": username, "reason": "locked"},
+            )
+            return Response(
+                {"detail": "Account temporarily locked. Try again later."},
+                status=status.HTTP_423_LOCKED,
+            )
+
         if user is None or not user.check_password(password) or not user.is_active:
+            if user is not None and user.is_active:
+                User.objects.filter(pk=user.pk).update(
+                    failed_login_count=F("failed_login_count") + 1
+                )
+                user.refresh_from_db(fields=["failed_login_count"])
+                if user.failed_login_count >= User.LOCKOUT_THRESHOLD:
+                    User.objects.filter(pk=user.pk).update(
+                        locked_until=timezone.now() + timedelta(minutes=User.LOCKOUT_MINUTES)
+                    )
             log_audit(
                 user=user,
                 action="FAILED_LOGIN",
@@ -74,6 +101,11 @@ class LoginView(APIView):
             return Response(
                 {"detail": "Invalid username or password."},
                 status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if user.failed_login_count or user.locked_until:
+            User.objects.filter(pk=user.pk).update(
+                failed_login_count=0, locked_until=None
             )
 
         refresh = RefreshToken.for_user(user)
@@ -165,13 +197,25 @@ class LogoutView(APIView):
 
 
 class UserViewSet(AuditMixin, viewsets.ModelViewSet):
-    """Admin/IT manage system users and roles."""
+    """Admin/IT manage system users and roles.
+
+    Deactivate/restore, unlock, password-reset, and activity are all
+    Admin-only (get_permissions) even though IT keeps view/create/edit --
+    these are more sensitive than editing a profile field.
+    """
 
     queryset = User.objects.all().order_by("username")
     permission_classes = [IsAdminOrIT]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["username", "email", "first_name", "last_name"]
     ordering_fields = ["username", "first_name", "email", "role", "is_active"]
+
+    ADMIN_ONLY_ACTIONS = {"destroy", "restore", "unlock", "set_password", "activity"}
+
+    def get_permissions(self):
+        if self.action in self.ADMIN_ONLY_ACTIONS:
+            self.permission_classes = [IsAdmin]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -194,3 +238,32 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"])
+    def unlock(self, request, pk=None):
+        instance = self.get_object()
+        instance.failed_login_count = 0
+        instance.locked_until = None
+        instance.save(update_fields=["failed_login_count", "locked_until"])
+        self.log_action(instance, "UPDATE", details={"action": "unlock"})
+        return Response(self.get_serializer(instance).data)
+
+    @action(detail=True, methods=["post"])
+    def set_password(self, request, pk=None):
+        instance = self.get_object()
+        serializer = AdminSetPasswordSerializer(
+            data=request.data, context={"target_user": instance}
+        )
+        serializer.is_valid(raise_exception=True)
+        instance.set_password(serializer.validated_data["password"])
+        instance.save(update_fields=["password"])
+        self.log_action(instance, "UPDATE", details={"action": "password_reset"})
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get"])
+    def activity(self, request, pk=None):
+        instance = self.get_object()
+        qs = instance.audit_logs.all().order_by("-created_at")
+        page = self.paginate_queryset(qs)
+        serializer = AuditLogSerializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
