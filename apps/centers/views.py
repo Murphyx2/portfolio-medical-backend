@@ -10,16 +10,20 @@ from apps.centers.serializers import (
     MedicalCenterSerializer,
 )
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdmin, IsAdminOrIT, IsStaffUser
+from apps.core.permissions import IsAdmin, IsStaffUser
 from apps.core.viewsets import ReferenceDataViewSet
 
 
 class MedicalCenterViewSet(ReferenceDataViewSet):
+    """Centers are visible to nobody but ADMIN -- every other role, including
+    IT (which could previously write here), is fully excluded, per the
+    decision to hide the Centers page from all non-admin roles."""
+
     queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
-    write_permission_classes = [IsAdminOrIT]
+    permission_classes = [IsAdmin]
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]

@@ -6,7 +6,7 @@ from apps.core.permissions import IsAdminOrCenterManager
 from apps.core.serializers import CoreModelSerializer
 from apps.core.services import can_write_center, is_own_doctor_relation
 from apps.core.validators import validate_phone
-from apps.doctors.models import DoctorProfile, DoctorSchedule
+from apps.doctors.models import DoctorPhoneNumber, DoctorProfile, DoctorSchedule
 from apps.rooms.models import Room
 from apps.rooms.serializers import RoomLiteSerializer
 from apps.services.models import Service
@@ -25,6 +25,15 @@ class DoctorLiteSerializer(serializers.ModelSerializer):
     class Meta:
         model = DoctorProfile
         fields = ["id", "code", "full_name"]
+
+
+class DoctorPhoneNumberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DoctorPhoneNumber
+        fields = ["id", "phone"]
+
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
 
 
 class DoctorProfileSerializer(CoreModelSerializer):
@@ -46,6 +55,10 @@ class DoctorProfileSerializer(CoreModelSerializer):
         many=True, required=False, queryset=Room.objects.filter(active=True)
     )
     rooms_detail = RoomLiteSerializer(source="rooms", many=True, read_only=True)
+    # Additional phone numbers beyond the primary `contact_phone` field --
+    # write side replaces the full set on every save (delete-and-recreate),
+    # mirroring PatientSerializer.extra_phones.
+    extra_phones = DoctorPhoneNumberSerializer(many=True, required=False)
 
     class Meta:
         model = DoctorProfile
@@ -58,6 +71,7 @@ class DoctorProfileSerializer(CoreModelSerializer):
             "code",
             "license_number",
             "contact_phone",
+            "extra_phones",
             "contact_email",
             "bio",
             "default_room",
@@ -76,6 +90,25 @@ class DoctorProfileSerializer(CoreModelSerializer):
 
     def validate_contact_phone(self, value: str) -> str:
         return validate_phone(value)
+
+    def create(self, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        doctor = super().create(validated_data)
+        if extra_phones:
+            DoctorPhoneNumber.objects.bulk_create(
+                DoctorPhoneNumber(doctor=doctor, phone=p["phone"]) for p in extra_phones
+            )
+        return doctor
+
+    def update(self, instance, validated_data):
+        extra_phones = validated_data.pop("extra_phones", None)
+        doctor = super().update(instance, validated_data)
+        if extra_phones is not None:
+            doctor.extra_phones.all().delete()
+            DoctorPhoneNumber.objects.bulk_create(
+                DoctorPhoneNumber(doctor=doctor, phone=p["phone"]) for p in extra_phones
+            )
+        return doctor
 
     def validate_services(self, value):
         # Read access to services_detail is open to any staff role (see

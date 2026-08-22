@@ -20,7 +20,7 @@ from apps.core.services import scope_queryset
 
 class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Appointment.all_objects.select_related(
-        "patient", "doctor__user", "center", "created_by"
+        "patient", "doctor__user", "center", "service", "created_by"
     )
     serializer_class = AppointmentSerializer
     permission_classes = [IsStaffUser]
@@ -75,9 +75,15 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
             raise serializers.ValidationError(
                 {"detail": "This appointment is already closed."}
             )
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            raise serializers.ValidationError(
+                {"reason": "A cancellation reason is required."}
+            )
         appointment.status = Appointment.Status.CANCELLED
-        appointment.save()
-        self.log_action(appointment, "UPDATE", details={"status": "CANCELLED"})
+        appointment.cancel_reason = reason
+        appointment.save(update_fields=["status", "cancel_reason"])
+        self.log_action(appointment, "UPDATE", details={"status": "CANCELLED", "reason": reason})
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
@@ -91,3 +97,22 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         appointment.save()
         self.log_action(appointment, "UPDATE", details={"status": "COMPLETED"})
         return Response(self.get_serializer(appointment).data)
+
+    @action(detail=True, methods=["post"])
+    def reschedule(self, request, pk=None):
+        """Lightweight single-field (date_time only) update, distinct from a
+        full PATCH -- keeps the frontend's Reschedule dialog a one-field
+        form and makes the write intent explicit for permission/audit
+        purposes (same gate as a general edit: CanManageAppointments)."""
+        appointment = self.get_object()
+        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+            raise serializers.ValidationError(
+                {"detail": "This appointment is already closed."}
+            )
+        serializer = self.get_serializer(
+            appointment, data={"date_time": request.data.get("date_time")}, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        self.log_action(appointment, "UPDATE", details={"date_time": serializer.data["date_time"]})
+        return Response(serializer.data)

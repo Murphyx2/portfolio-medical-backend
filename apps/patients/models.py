@@ -176,3 +176,22 @@ class Patient(TimestampedModel, SoftDeleteModel):
 
     def __str__(self) -> str:
         return self.full_name
+
+
+class PatientPhoneNumber(models.Model):
+    """Additional phone numbers beyond `Patient.phone` (the primary number,
+    left untouched everywhere it's already read -- masking, the Appointments
+    "patient phone" column, etc). Encrypted like every other patient PII
+    field."""
+
+    patient = models.ForeignKey(
+        Patient, on_delete=models.CASCADE, related_name="extra_phones"
+    )
+    phone = EncryptedCharField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.patient_id}:{self.phone}"

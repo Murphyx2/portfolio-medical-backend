@@ -1,8 +1,9 @@
-"""Rooms module: RBAC (read=all staff, create=Admin/IT, update=Admin/IT/
-Receptionist, delete=Admin/IT-only), unique code, required center (PROTECT),
-soft-delete/restore (admin-only, matching the codebase-wide can_view_inactive()
-invariant), search/filter, code/floor_area uppercase normalization, and the
-RoomType catalog (mirrors the ServiceType RBAC/CRUD pattern).
+"""Rooms module: RBAC (read=all staff, write=Admin/CenterManager only --
+IT/Receptionist/Doctor/Nurse are read-only), unique code, required center
+(PROTECT), soft-delete/restore (admin-only, matching the codebase-wide
+can_view_inactive() invariant), search/filter, code/floor_area uppercase
+normalization, and the RoomType catalog (mirrors the ServiceType RBAC/CRUD
+pattern).
 """
 
 from apps.centers.models import MedicalCenter
@@ -57,14 +58,16 @@ def test_every_role_can_read_rooms(
 
 
 # ---------------------------------------------------------------------------
-# Create: Admin/IT only
+# Create: Admin/CenterManager only
 # ---------------------------------------------------------------------------
 
 
-def test_admin_and_it_can_create_room(auth_client, admin_user, it_user):
+def test_admin_and_center_manager_can_create_room(
+    auth_client, admin_user, center_manager_user
+):
     center = _center()
     room_type = _room_type()
-    for i, user in enumerate((admin_user, it_user)):
+    for i, user in enumerate((admin_user, center_manager_user)):
         res = auth_client(user).post(
             "/api/rooms/",
             _payload(code=f"R{i}", center_id=center.id, room_type_id=room_type.id),
@@ -73,11 +76,11 @@ def test_admin_and_it_can_create_room(auth_client, admin_user, it_user):
         assert res.status_code == 201, (user.role, res.data)
 
 
-def test_receptionist_and_doctor_cannot_create_room(
-    auth_client, receptionist_user, doctor_user
+def test_receptionist_doctor_and_it_cannot_create_room(
+    auth_client, receptionist_user, doctor_user, it_user
 ):
     center = _center()
-    for user in (receptionist_user, doctor_user):
+    for user in (receptionist_user, doctor_user, it_user):
         res = auth_client(user).post(
             "/api/rooms/", _payload(center_id=center.id), format="json"
         )
@@ -85,15 +88,15 @@ def test_receptionist_and_doctor_cannot_create_room(
 
 
 # ---------------------------------------------------------------------------
-# Update: Admin/IT/Receptionist; Doctor forbidden
+# Update: Admin/CenterManager only; everyone else forbidden
 # ---------------------------------------------------------------------------
 
 
-def test_admin_it_and_receptionist_can_update_room(
-    auth_client, admin_user, it_user, receptionist_user
+def test_admin_and_center_manager_can_update_room(
+    auth_client, admin_user, center_manager_user
 ):
     center = _center()
-    for user in (admin_user, it_user, receptionist_user):
+    for user in (admin_user, center_manager_user):
         room = _room(code=f"U-{user.username}", center=center)
         res = auth_client(user).patch(
             f"/api/rooms/{room.id}/", {"name": "Renamed"}, format="json"
@@ -102,22 +105,27 @@ def test_admin_it_and_receptionist_can_update_room(
         assert res.data["name"] == "Renamed"
 
 
-def test_doctor_cannot_update_room(auth_client, doctor_user):
-    room = _room()
-    res = auth_client(doctor_user).patch(
-        f"/api/rooms/{room.id}/", {"name": "Renamed"}, format="json"
-    )
-    assert res.status_code == 403, res.data
+def test_doctor_it_and_receptionist_cannot_update_room(
+    auth_client, doctor_user, it_user, receptionist_user
+):
+    for user in (doctor_user, it_user, receptionist_user):
+        room = _room(code=f"NU-{user.username}", center=_center(code=f"NU-{user.username}"))
+        res = auth_client(user).patch(
+            f"/api/rooms/{room.id}/", {"name": "Renamed"}, format="json"
+        )
+        assert res.status_code == 403, (user.role, res.data)
 
 
 # ---------------------------------------------------------------------------
-# Delete (deactivate): Admin/IT only, Receptionist forbidden
+# Delete (deactivate): Admin/CenterManager only
 # ---------------------------------------------------------------------------
 
 
-def test_admin_and_it_can_delete_room(auth_client, admin_user, it_user):
+def test_admin_and_center_manager_can_delete_room(
+    auth_client, admin_user, center_manager_user
+):
     center = _center()
-    for user in (admin_user, it_user):
+    for user in (admin_user, center_manager_user):
         room = _room(code=f"D-{user.username}", center=center)
         res = auth_client(user).delete(f"/api/rooms/{room.id}/")
         assert res.status_code == 204, (user.role, res.data)
@@ -125,10 +133,13 @@ def test_admin_and_it_can_delete_room(auth_client, admin_user, it_user):
         assert room.active is False
 
 
-def test_receptionist_cannot_delete_room(auth_client, receptionist_user):
-    room = _room()
-    res = auth_client(receptionist_user).delete(f"/api/rooms/{room.id}/")
-    assert res.status_code == 403, res.data
+def test_receptionist_and_it_cannot_delete_room(
+    auth_client, receptionist_user, it_user
+):
+    for user in (receptionist_user, it_user):
+        room = _room(code=f"ND-{user.username}", center=_center(code=f"ND-{user.username}"))
+        res = auth_client(user).delete(f"/api/rooms/{room.id}/")
+        assert res.status_code == 403, (user.role, res.data)
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +317,8 @@ def test_code_and_floor_area_uppercased_on_update(auth_client, admin_user):
 
 
 # ---------------------------------------------------------------------------
-# RoomType catalog: read=all staff, write=Admin/IT/Receptionist, delete=
-# Admin/IT-only -- same RBAC shape as Room itself (CanManageRooms).
+# RoomType catalog: read=all staff, write=Admin/CenterManager only -- same
+# RBAC shape as Room itself (IsAdminOrCenterManager).
 # ---------------------------------------------------------------------------
 
 
@@ -320,8 +331,10 @@ def test_every_role_can_read_room_types(
         assert res.status_code == 200, (user.role, res.data)
 
 
-def test_admin_and_it_can_create_room_type(auth_client, admin_user, it_user):
-    for i, user in enumerate((admin_user, it_user)):
+def test_admin_and_center_manager_can_create_room_type(
+    auth_client, admin_user, center_manager_user
+):
+    for i, user in enumerate((admin_user, center_manager_user)):
         res = auth_client(user).post(
             "/api/room-types/", {"name": f"Tipo {i}"}, format="json"
         )
@@ -335,19 +348,20 @@ def test_doctor_cannot_create_room_type(auth_client, doctor_user):
     assert res.status_code == 403, res.data
 
 
-def test_receptionist_can_update_but_not_create_room_type(
-    auth_client, receptionist_user
+def test_receptionist_and_it_cannot_write_room_type(
+    auth_client, receptionist_user, it_user
 ):
-    res = auth_client(receptionist_user).post(
-        "/api/room-types/", {"name": "Rayos X"}, format="json"
-    )
-    assert res.status_code == 403, res.data
+    for user in (receptionist_user, it_user):
+        res = auth_client(user).post(
+            "/api/room-types/", {"name": f"Rayos X {user.username}"}, format="json"
+        )
+        assert res.status_code == 403, (user.role, res.data)
 
-    room_type = _room_type(name="Editable")
-    res = auth_client(receptionist_user).patch(
-        f"/api/room-types/{room_type.id}/", {"name": "Renamed"}, format="json"
-    )
-    assert res.status_code == 200, res.data
+        room_type = _room_type(name=f"Editable-{user.username}")
+        res = auth_client(user).patch(
+            f"/api/room-types/{room_type.id}/", {"name": "Renamed"}, format="json"
+        )
+        assert res.status_code == 403, (user.role, res.data)
 
 
 def test_receptionist_cannot_delete_room_type(auth_client, receptionist_user):

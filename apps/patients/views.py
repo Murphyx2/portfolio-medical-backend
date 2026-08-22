@@ -12,7 +12,9 @@ from apps.patients.serializers import PatientSerializer
 
 
 class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
-    queryset = Patient.all_objects.select_related("ars", "ars_program", "center").all()
+    queryset = Patient.all_objects.select_related(
+        "ars", "ars_program", "center"
+    ).prefetch_related("extra_phones").all()
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
     delete_permission_classes = [CanDeletePatient]
