@@ -60,7 +60,7 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         # self.permission_denied() checks this used to hand-roll.
         if self.action == "cancel":
             return [CanCancelAppointment()]
-        if self.action == "complete":
+        if self.action in ("confirm", "complete"):
             return [CanCompleteAppointment()]
         return permissions
 
@@ -87,11 +87,26 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
+    def confirm(self, request, pk=None):
+        """The patient has confirmed attendance -- an intermediate step
+        between SCHEDULED and COMPLETED (see `complete`, which now only
+        accepts a CONFIRMED appointment)."""
+        appointment = self.get_object()
+        if appointment.status != Appointment.Status.SCHEDULED:
+            raise serializers.ValidationError(
+                {"detail": "Only scheduled appointments can be confirmed."}
+            )
+        appointment.status = Appointment.Status.CONFIRMED
+        appointment.save()
+        self.log_action(appointment, "UPDATE", details={"status": "CONFIRMED"})
+        return Response(self.get_serializer(appointment).data)
+
+    @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         appointment = self.get_object()
-        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+        if appointment.status != Appointment.Status.CONFIRMED:
             raise serializers.ValidationError(
-                {"detail": "This appointment is already closed."}
+                {"detail": "Only confirmed appointments can be completed."}
             )
         appointment.status = Appointment.Status.COMPLETED
         appointment.save()
