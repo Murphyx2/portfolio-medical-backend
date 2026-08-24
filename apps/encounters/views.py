@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 
+from apps.appointments.services import complete_todays_appointments_for_patient
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
 from apps.core.services import scope_queryset
@@ -64,6 +65,9 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
             encounter,
             "UPDATE",
             details={"status": "ACTIVE", "encounter_number": encounter.encounter_number},
+        )
+        complete_todays_appointments_for_patient(
+            encounter.patient, timezone.localtime(encounter.admitted_at).date(), request.user, request=request
         )
         return Response(self.get_serializer(encounter).data)
 

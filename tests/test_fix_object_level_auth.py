@@ -69,7 +69,7 @@ def test_doctor_cannot_book_appointment_for_another_doctor(
         {
             "patient": patient.id,
             "doctor": other_profile.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -91,7 +91,7 @@ def test_doctor_can_book_appointment_for_own_profile(
             "patient": patient.id,
             "doctor": profile.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -170,7 +170,7 @@ def test_doctor_appointment_list_scoped_to_own_profile(
     Appointment.objects.create(
         patient=patient,
         doctor=own_profile,
-        date_time="2026-08-11T09:00:00Z",
+        date_time="2099-01-11T09:00:00Z",
         created_by=receptionist_user,
     )
     Appointment.objects.create(

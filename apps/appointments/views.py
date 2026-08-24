@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
+from apps.appointments.services import cancel_noshow_appointments
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanCancelAppointment,
@@ -49,7 +50,13 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
     ]
 
     def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor__user")
+        user = getattr(self.request, "user", None)
+        if getattr(user, "is_authenticated", False):
+            # Lazy no-show maintenance: no celery/cron in this repo, so any
+            # SCHEDULED appointment that's gone stale is auto-cancelled the
+            # next time anyone reads the appointments endpoint.
+            cancel_noshow_appointments(user, request=self.request)
+        return scope_queryset(super().get_queryset(), user, owner_field="doctor__user")
 
     def get_permissions(self):
         permissions = super().get_permissions()
