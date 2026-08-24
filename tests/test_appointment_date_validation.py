@@ -67,8 +67,16 @@ def test_edit_notes_on_past_appointment_without_changing_date_allowed(
 ):
     patient = _patient()
     doctor = _doctor(doctor_user)
+    # Within the no-show auto-cancel grace window (12h, apps/appointments/
+    # services.py::NO_SHOW_GRACE) so the appointment stays SCHEDULED --
+    # a longer-past date_time would get lazily auto-cancelled as a no-show
+    # by AppointmentViewSet.get_queryset() before this PATCH's permission
+    # check runs, which would then correctly 403 under the CANCELLED edit
+    # lock (a different behavior than what this test is exercising).
     appt = Appointment.objects.create(
-        patient=patient, doctor=doctor, date_time=_past(), created_by=receptionist_user,
+        patient=patient, doctor=doctor,
+        date_time=(timezone.now() - timedelta(hours=6)).isoformat(),
+        created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).patch(
         f"/api/appointments/{appt.id}/", {"notes": "Updated notes"}, format="json"

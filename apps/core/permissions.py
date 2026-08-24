@@ -192,26 +192,43 @@ class IsStaffUser(BasePermission):
 
 
 class CanManageAppointments(RoleUnionPermission):
-    """Doctors, nurses, receptionists, and admins may create/update
-    appointments.
+    """Doctors, nurses, receptionists, center managers, and admins may
+    create/update appointments.
 
     Object-level: a doctor may only write to appointments assigned to them
     (mirrors CanManageEncounters) -- the center-shared read scope in
     AppointmentViewSet.get_queryset() must not imply write access to a
-    colleague's appointment at the same center.
+    colleague's appointment at the same center. Once an appointment is
+    COMPLETED or CANCELLED (Appointment.is_locked_for_edit()), only admins
+    and center managers may still send a generic update/partial_update to
+    it -- the dedicated cancel/complete/reschedule actions enforce their own
+    status-transition rules (and surface a 400, not a 403) so the lock only
+    applies to the plain edit path, not those actions.
     """
 
     allowed_roles = (
         User.Role.DOCTOR,
         User.Role.NURSE,
         User.Role.RECEPTIONIST,
+        User.Role.CENTER_MANAGER,
         User.Role.ADMIN,
     )
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        return is_owner_doctor(request.user, obj)
+        if not is_owner_doctor(request.user, obj):
+            return False
+        if (
+            getattr(view, "action", None) in ("update", "partial_update")
+            and obj.is_locked_for_edit()
+            and not (
+                getattr(request.user, "is_admin", False)
+                or getattr(request.user, "is_center_manager", False)
+            )
+        ):
+            return False
+        return True
 
 
 class CanCancelAppointment(RoleUnionPermission):
