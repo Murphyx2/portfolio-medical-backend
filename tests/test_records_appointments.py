@@ -168,7 +168,7 @@ def test_appointment_created_by_receptionist(
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -189,7 +189,7 @@ def test_nurse_can_create_appointment(auth_client, nurse_user, receptionist_user
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -207,7 +207,7 @@ def test_appointment_patient_info_masked_for_it_role(
     Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(it_user).get("/api/appointments/")
@@ -239,7 +239,7 @@ def test_doctor_sees_colleagues_appointment_at_shared_center(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(doctor_user).get("/api/appointments/")
@@ -269,7 +269,7 @@ def test_doctor_cannot_write_colleagues_appointment_at_shared_center(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     client = auth_client(doctor_user)
@@ -309,7 +309,7 @@ def test_doctor_can_write_own_appointment_at_shared_center(
         patient=patient,
         doctor=own_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     client = auth_client(doctor_user)
@@ -346,7 +346,7 @@ def test_doctor_without_binding_does_not_see_other_centers_appointment(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(doctor_user).get("/api/appointments/")
@@ -363,7 +363,7 @@ def test_cancel_appointment_forbidden_for_it(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(it_user).post(f"/api/appointments/{appt.id}/cancel/", {"reason": "Patient request"}, format="json")
@@ -383,7 +383,7 @@ def test_cancel_appointment_requires_non_empty_reason(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/cancel/", {}, format="json")
@@ -404,7 +404,7 @@ def test_confirm_appointment_moves_scheduled_to_confirmed(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/confirm/")
@@ -419,7 +419,7 @@ def test_confirm_appointment_forbidden_for_it(auth_client, receptionist_user, do
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(it_user).post(f"/api/appointments/{appt.id}/confirm/")
@@ -440,7 +440,7 @@ def test_confirm_appointment_rejected_when_not_scheduled(auth_client, receptioni
         appt = Appointment.objects.create(
             patient=patient,
             doctor=doctor,
-            date_time="2026-08-10T09:00:00Z",
+            date_time="2099-01-10T09:00:00Z",
             status=status,
             created_by=receptionist_user,
         )
@@ -459,7 +459,7 @@ def test_complete_appointment_rejected_when_not_confirmed(auth_client, reception
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/complete/")
@@ -476,14 +476,14 @@ def test_reschedule_and_cancel_still_allowed_while_confirmed(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         status=Appointment.Status.CONFIRMED,
         created_by=receptionist_user,
     )
     client = auth_client(receptionist_user)
     res = client.post(
         f"/api/appointments/{appt.id}/reschedule/",
-        {"date_time": "2026-08-11T10:30:00Z"},
+        {"date_time": "2099-01-11T10:30:00Z"},
         format="json",
     )
     assert res.status_code == 200, res.data
@@ -501,7 +501,7 @@ def test_create_appointment_requires_service(auth_client, receptionist_user, doc
     doctor = _make_doctor(doctor_user)
     res = auth_client(receptionist_user).post(
         "/api/appointments/",
-        {"patient": patient.id, "doctor": doctor.id, "date_time": "2026-08-10T09:00:00Z"},
+        {"patient": patient.id, "doctor": doctor.id, "date_time": "2099-01-10T09:00:00Z"},
         format="json",
     )
     assert res.status_code == 400, res.data
@@ -523,7 +523,7 @@ def test_create_appointment_defaults_center_to_org_default(
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -539,18 +539,18 @@ def test_reschedule_appointment_updates_date_time_only(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         duration_minutes=45,
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(
         f"/api/appointments/{appt.id}/reschedule/",
-        {"date_time": "2026-08-11T10:30:00Z"},
+        {"date_time": "2099-01-11T10:30:00Z"},
         format="json",
     )
     assert res.status_code == 200, res.data
     appt.refresh_from_db()
-    assert appt.date_time.isoformat() == "2026-08-11T10:30:00+00:00"
+    assert appt.date_time.isoformat() == "2099-01-11T10:30:00+00:00"
     assert appt.duration_minutes == 45
 
 
@@ -562,13 +562,13 @@ def test_reschedule_forbidden_for_closed_appointment(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         status=Appointment.Status.CANCELLED,
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(
         f"/api/appointments/{appt.id}/reschedule/",
-        {"date_time": "2026-08-11T10:30:00Z"},
+        {"date_time": "2099-01-11T10:30:00Z"},
         format="json",
     )
     assert res.status_code == 400, res.data

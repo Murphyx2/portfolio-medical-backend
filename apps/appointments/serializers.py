@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.appointments.models import Appointment
@@ -78,6 +79,17 @@ class AppointmentSerializer(CoreModelSerializer):
             raise serializers.ValidationError(
                 "Doctors may only manage appointments for themselves."
             )
+        return value
+
+    def validate_date_time(self, value):
+        # Only reject when the submitted value actually changes the
+        # date/time -- editing notes/doctor/service on an appointment
+        # that's already past (but still open, e.g. inside the no-show
+        # grace window) must keep working.
+        if self.instance is not None and self.instance.date_time == value:
+            return value
+        if value < timezone.now():
+            raise serializers.ValidationError("Appointment date/time cannot be in the past.")
         return value
 
     def validate(self, attrs):
