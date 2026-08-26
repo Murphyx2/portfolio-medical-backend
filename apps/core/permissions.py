@@ -69,8 +69,11 @@ class IsAdminOrIT(RoleUnionPermission):
 
 class IsAdminOrITReadOnly(BasePermission):
     """System settings (apps.systemsettings): ADMIN gets full read/write,
-    IT is admitted for safe (GET) methods only, every other role is denied
-    entirely -- unlike IsAdminOrIT, IT here can never PATCH."""
+    IT and CENTER_MANAGER are admitted for safe (GET) methods only, every
+    other role is denied entirely -- unlike IsAdminOrIT, IT here can never
+    PATCH. CENTER_MANAGER needs read access so it can reach the Settings
+    page's language section (frontend/src/utils/can.ts), but stays
+    read-only on the numeric fields the same as IT."""
 
     def has_permission(self, request, view):
         user = request.user
@@ -78,7 +81,7 @@ class IsAdminOrITReadOnly(BasePermission):
             return False
         if user.role == User.Role.ADMIN:
             return True
-        if user.role == User.Role.IT:
+        if user.role in (User.Role.IT, User.Role.CENTER_MANAGER):
             return request.method in SAFE_METHODS
         return False
 
