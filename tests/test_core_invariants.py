@@ -729,14 +729,12 @@ def test_patient_search_filter_multiple_terms_are_and_ed(receptionist_user):
 
 
 def test_patient_search_filter_guardian_cedula_matches(receptionist_user):
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
 
     request = _search_request(receptionist_user, guardian_cedula)
@@ -748,14 +746,12 @@ def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_use
     """EncounterSearchFilter's digit lookup deliberately omits
     include_guardian -- confirms the one documented behavioral fork between
     PatientSearchFilter and EncounterSearchFilter."""
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
     _make_encounter(minor, doctor_user)
 

@@ -20,7 +20,9 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         "patient", "patient__ars", "patient__ars_program",
         "doctor__user", "room", "center", "service_type", "ars", "ars_program",
         "created_by",
-    ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
+    ).prefetch_related(
+        "diagnoses", "services__service", "services__doctor__user", "patient__guardians"
+    )
     serializer_class = EncounterSerializer
     permission_classes = [IsStaffUser]
     write_permission_classes = [CanManageEncounters]

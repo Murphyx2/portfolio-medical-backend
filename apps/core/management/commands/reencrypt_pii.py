@@ -15,7 +15,7 @@ from django.db import connection
 
 from apps.core.encryption import blind_index_digits, get_cipher
 from apps.core.fields import EncryptedCharField, EncryptedTextField
-from apps.patients.models import Patient
+from apps.patients.models import Patient, PatientGuardian, PatientPhoneNumber
 from apps.records.models import ConsultationLog, MedicalRecord
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -40,7 +40,7 @@ class Command(BaseCommand):
 
         total = 0
         with connection.cursor() as cursor:
-            for model in (Patient, MedicalRecord, ConsultationLog):
+            for model in (Patient, PatientGuardian, PatientPhoneNumber, MedicalRecord, ConsultationLog):
                 fields = _encrypted_field_names(model)
                 table = model._meta.db_table
                 cols = ", ".join(["id", *fields])
@@ -61,17 +61,17 @@ class Command(BaseCommand):
                             )
                             continue
                         updates[name] = new_cipher.encrypt(plain.encode()).decode()
-                        if model is Patient and name in Patient.PII_INDEX_FIELDS:
-                            # The blind-index key is derived from PII_FIELD_KEY
-                            # (settings.PII_FIELD_KEY), so it rotates along with
-                            # it -- skipping this would strand pre-rotation
-                            # patients' hashes under the old key, breaking
-                            # full-number search until each is individually
-                            # re-saved. Reads from Patient.PII_INDEX_FIELDS
-                            # (the same mapping save() uses) instead of a
-                            # hard-coded ("cedula", "nss") tuple, which used
-                            # to silently skip guardian_cedula_hash.
-                            _, hash_field = Patient.PII_INDEX_FIELDS[name]
+                        # The blind-index key is derived from PII_FIELD_KEY
+                        # (settings.PII_FIELD_KEY), so it rotates along with
+                        # it -- skipping this would strand pre-rotation rows'
+                        # hashes under the old key, breaking exact search
+                        # until each is individually re-saved. Generalized to
+                        # any model declaring PII_INDEX_FIELDS (Patient,
+                        # PatientGuardian) instead of a Patient-only check,
+                        # which used to silently skip guardian rows entirely.
+                        index_fields = getattr(model, "PII_INDEX_FIELDS", {})
+                        if name in index_fields:
+                            _, hash_field = index_fields[name]
                             if hash_field:
                                 updates[hash_field] = blind_index_digits(plain)
                     if updates:

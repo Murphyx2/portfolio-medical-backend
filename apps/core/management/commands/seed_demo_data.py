@@ -26,7 +26,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.ars.models import ARS
-from apps.patients.models import Patient
+from apps.patients.models import Patient, PatientGuardian
 from apps.records.models import MedicalRecord
 
 FIRST_NAMES = [
@@ -138,11 +138,13 @@ class Command(BaseCommand):
                 nss=nss,
             )
             age = self._age(birth_date)
-            if age < 18:
-                patient_kwargs.update(self._guardian_kwargs(rng))
-            elif age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
+            is_minor = age < 18
+            if not is_minor and age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
                 patient_kwargs.update(self._ars_kwargs(rng, ars_choices))
-            patients.append(Patient.objects.create(**patient_kwargs))
+            patient = Patient.objects.create(**patient_kwargs)
+            if is_minor:
+                PatientGuardian.objects.create(patient=patient, **self._guardian_kwargs(rng))
+            patients.append(patient)
         return patients
 
     @staticmethod
@@ -152,17 +154,16 @@ class Command(BaseCommand):
         return {"ars": ars, "ars_program": rng.choice(programs) if programs else None}
 
     def _guardian_kwargs(self, rng: random.Random) -> dict:
-        """Synthetic guardian/tutor info for a minor patient (no uniqueness
-        needed -- siblings can legitimately share a guardian)."""
+        """Synthetic PatientGuardian fields for a minor patient (no
+        uniqueness needed -- siblings can legitimately share a guardian)."""
         return {
-            "has_guardian": True,
-            "guardian_first_name": rng.choice(FIRST_NAMES),
-            "guardian_last_name": f"{rng.choice(LAST_NAMES)} {rng.choice(LAST_NAMES)}",
-            "guardian_cedula": "".join(str(rng.randint(0, 9)) for _ in range(11)),
-            "guardian_nss": (
+            "first_name": rng.choice(FIRST_NAMES),
+            "last_name": f"{rng.choice(LAST_NAMES)} {rng.choice(LAST_NAMES)}",
+            "cedula": "".join(str(rng.randint(0, 9)) for _ in range(11)),
+            "nss": (
                 "".join(str(rng.randint(0, 9)) for _ in range(11)) if rng.random() < 0.5 else ""
             ),
-            "guardian_phone": f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
+            "phone": f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
         }
 
     @staticmethod
