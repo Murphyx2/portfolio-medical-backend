@@ -100,11 +100,13 @@ class RecordImageSerializer(CoreModelSerializer):
     def get_image_url(self, obj):
         if not obj.image:
             return None
-        signed = f"{obj.image.url}?token={sign_media_token(obj.image.name)}"
-        request = self.context.get("request")
-        if request:
-            return request.build_absolute_uri(signed)
-        return signed
+        # Relative, not request.build_absolute_uri(): behind the Vite dev
+        # proxy (changeOrigin: true, PROXY_TARGET=http://backend:8000) Django
+        # sees Host: backend:8000 -- an absolute URL would bake in that
+        # Docker-internal hostname, which the browser can't resolve. A
+        # relative URL resolves against the page's own origin and rides the
+        # existing /media proxy, same as /api calls already do.
+        return f"{obj.image.url}?token={sign_media_token(obj.image.name)}"
 
 
 class RecordPersonalConditionSerializer(CoreModelSerializer):
