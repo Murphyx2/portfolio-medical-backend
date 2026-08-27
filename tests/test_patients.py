@@ -128,11 +128,9 @@ def test_it_sees_redacted_pii(auth_client, it_user, receptionist_user):
     assert "555" not in result["phone"]
 
 
-def test_nurse_cannot_modify_patients(auth_client, nurse_user, receptionist_user):
-    auth_client(receptionist_user).post("/api/patients/", _patient_payload(), format="json")
-    client = auth_client(nurse_user)
-    res = client.post("/api/patients/", _patient_payload(), format="json")
-    assert res.status_code in (401, 403)
+def test_nurse_can_create_patients(auth_client, nurse_user):
+    res = auth_client(nurse_user).post("/api/patients/", _patient_payload(), format="json")
+    assert res.status_code == 201, res.data
 
 
 def test_update_patient_keeps_encryption(auth_client, receptionist_user):

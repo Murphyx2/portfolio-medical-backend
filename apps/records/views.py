@@ -162,12 +162,16 @@ class APCategoryViewSet(ReferenceDataViewSet):
 
     def perform_create(self, serializer):
         # sort_order is never client-supplied on create -- always the next
-        # free slot at the end of the catalog. Editing still lets an admin
-        # pick any order explicitly (perform_update is untouched). Mirrors
-        # AuditMixin.perform_create's body (can't use super() here since it
-        # calls serializer.save() with no way to inject sort_order).
+        # free slot at the end of the catalog. Computed against the
+        # active-only manager (not all_objects) so a freed number is reused:
+        # if the highest-numbered category is later deleted, the next
+        # created one gets that same number back instead of always climbing.
+        # Editing still lets an admin pick any order explicitly
+        # (perform_update is untouched). Mirrors AuditMixin.perform_create's
+        # body (can't use super() here since it calls serializer.save() with
+        # no way to inject sort_order).
         next_order = (
-            APCategory.all_objects.aggregate(models.Max("sort_order"))["sort_order__max"] or 0
+            APCategory.objects.aggregate(models.Max("sort_order"))["sort_order__max"] or 0
         ) + 1
         serializer.save(sort_order=next_order)
         self._audit("CREATE", serializer.instance)
@@ -185,9 +189,11 @@ class APTypeViewSet(ReferenceDataViewSet):
     def perform_create(self, serializer):
         # Auto-increment scoped to the type's own category, matching how
         # ApMultiSelect groups/orders types within each category group.
+        # Active-only manager (not all_objects) so a freed number is reused,
+        # same reasoning as APCategoryViewSet.perform_create above.
         category = serializer.validated_data["category"]
         next_order = (
-            APType.all_objects.filter(category=category).aggregate(models.Max("sort_order"))[
+            APType.objects.filter(category=category).aggregate(models.Max("sort_order"))[
                 "sort_order__max"
             ]
             or 0

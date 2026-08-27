@@ -305,21 +305,14 @@ class PatientSerializer(CoreModelSerializer):
                 {"center": "You are not approved to work at this center."}
             )
 
-        # The center field is only editable by ADMIN in the frontend form
-        # (disabled otherwise) -- every other role relies on a client-side
-        # is_default auto-fill that silently fails for them because the
-        # /centers/ list endpoint is admin-only (403), leaving the field
-        # blank. Fill it in server-side on create only, and only for
-        # non-admins (who can never deliberately choose "no center" since
-        # the field is disabled for them) -- never on update, so an existing
-        # patient an admin deliberately left centerless (NULL = visible to
-        # all staff, see CLAUDE.md) doesn't get silently bound on the next
-        # unrelated PATCH by a non-admin.
-        if (
-            self.instance is None
-            and attrs.get("center") is None
-            and getattr(user, "role", None) != "ADMIN"
-        ):
+        # The center field isn't collected from the Patient create/edit form
+        # at all (mirrors apps/rooms/serializers.py::RoomSerializer.validate())
+        # -- always auto-filled from the org's default center on create when
+        # omitted, regardless of role. Never on update, so an existing patient
+        # an admin deliberately left centerless via a direct API call (NULL =
+        # visible to all staff, see CLAUDE.md) doesn't get silently bound on
+        # the next unrelated PATCH.
+        if self.instance is None and attrs.get("center") is None:
             attrs["center"] = MedicalCenter.objects.filter(is_default=True).first()
 
         # Cedula/guardian requiredness is only re-checked when the request is

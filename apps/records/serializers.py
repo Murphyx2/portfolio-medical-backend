@@ -2,6 +2,7 @@ from io import BytesIO
 
 from PIL import Image
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
@@ -32,6 +33,25 @@ class PatientLiteSerializer(PatientSummarySerializer):
 
 
 class APCategorySerializer(CoreModelSerializer):
+    # Explicit UniqueValidator with a clean Spanish message -- DRF's
+    # auto-generated one for this field resolves to the oddly-capitalized,
+    # untranslated "ap category with this name already exists." (derived
+    # from Django's camel_case_to_spaces("APCategory")).
+    name = serializers.CharField(
+        max_length=255,
+        validators=[
+            # all_objects, not objects: the DB-level unique=True on name
+            # applies regardless of active/soft-deleted status, so a
+            # soft-deleted category still blocks the name -- the active-only
+            # manager would miss that row and let a raw IntegrityError (500)
+            # through instead of this clean validation error.
+            UniqueValidator(
+                queryset=APCategory.all_objects.all(),
+                message="Ya existe una categoría con este nombre.",
+            )
+        ],
+    )
+
     class Meta:
         model = APCategory
         fields = ["id", "name", "sort_order", "active"]

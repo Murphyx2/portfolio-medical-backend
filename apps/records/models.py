@@ -356,7 +356,11 @@ class APType(TimestampedModel, SoftDeleteModel):
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        ordering = ["sort_order", "name"]
+        # Grouped by the type's own category first (in that category's own
+        # order), then by the type's order within it -- so the default
+        # (no explicit ?ordering=) list reads as one category at a time,
+        # not just a flat list ordered by each type's own number.
+        ordering = ["category__sort_order", "category__name", "sort_order", "name"]
         constraints = [
             models.UniqueConstraint(
                 fields=["category", "name"],

@@ -352,9 +352,9 @@ class CanManageEncounters(BasePermission):
 
 class PatientDataPermission(BasePermission):
     """
-    Patient data is sensitive: writes require Admin/Doctor/Receptionist; reads
-    are allowed for authenticated staff only, and doctors see full records
-    while others see redacted summaries (enforced by serializers).
+    Patient data is sensitive: writes require Admin/Doctor/Receptionist/Nurse;
+    reads are allowed for authenticated staff only, and doctors see full
+    records while others see redacted summaries (enforced by serializers).
     """
 
     def has_permission(self, request, view):
@@ -366,9 +366,15 @@ class PatientDataPermission(BasePermission):
             request.user.is_admin
             or request.user.is_doctor
             or request.user.is_receptionist
+            or request.user.is_nurse
         )
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return is_staff_role(request.user)
-        return request.user.is_admin or request.user.is_doctor or request.user.is_receptionist
+        return (
+            request.user.is_admin
+            or request.user.is_doctor
+            or request.user.is_receptionist
+            or request.user.is_nurse
+        )
