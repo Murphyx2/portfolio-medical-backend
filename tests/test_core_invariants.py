@@ -66,15 +66,15 @@ def _make_doctor(user, **overrides):
 
 
 def _make_service_type(**overrides):
-    data = {"name": "Consulta", "requires_doctor": False, "requires_diagnosis": True}
+    data = {"name": "Consulta", "requires_doctor": False}
     data.update(overrides)
     return ServiceType.objects.get_or_create(
-        name=data.pop("name"), defaults=data
+        name=data.pop("name").upper(), defaults=data
     )[0]
 
 
 def _make_room(center, **overrides):
-    room_type = RoomType.objects.get_or_create(name="Consult")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULT")[0]
     data = {"code": f"R{center.pk}", "name": "Room 1", "room_type": room_type, "center": center}
     data.update(overrides)
     return Room.objects.create(**data)
@@ -446,17 +446,14 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
 
 def test_ready_for_active_requires_room(doctor_user):
     patient = _make_patient()
-    encounter = _make_encounter(
-        patient, doctor_user, service_type=_make_service_type(requires_diagnosis=False)
-    )
+    encounter = _make_encounter(patient, doctor_user)
     errors = encounter.ready_for_active()
     assert "A room is required to admit this encounter." in errors
 
 
 def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
     # Diagnosis capture was removed from the admission flow entirely --
-    # ready_for_active() no longer checks requires_diagnosis/primary
-    # diagnosis at all, regardless of the service type's flag.
+    # ready_for_active() never checks for a diagnosis at all.
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
@@ -464,20 +461,7 @@ def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
         patient,
         doctor_user,
         room=room,
-        service_type=_make_service_type(name="Needs Dx", requires_diagnosis=True),
-    )
-    assert encounter.ready_for_active() == []
-
-
-def test_ready_for_active_service_type_not_requiring_diagnosis_skips_check(doctor_user):
-    center = _make_center(code="C-READY3")
-    room = _make_room(center)
-    patient = _make_patient()
-    encounter = _make_encounter(
-        patient,
-        doctor_user,
-        room=room,
-        service_type=_make_service_type(name="No Dx Needed", requires_diagnosis=False),
+        service_type=_make_service_type(name="Needs Dx"),
     )
     assert encounter.ready_for_active() == []
 

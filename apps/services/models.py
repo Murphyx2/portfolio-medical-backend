@@ -10,10 +10,13 @@ class ServiceType(TimestampedModel, SoftDeleteModel):
     # (e.g. a lab-only visit) or a primary diagnosis to admit (e.g. a
     # routine vaccination) -- see apps/encounters/models.py::Encounter.
     requires_doctor = models.BooleanField(default=False)
-    requires_diagnosis = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.upper()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.name
@@ -41,6 +44,10 @@ class Service(TimestampedModel, SoftDeleteModel):
 
     class Meta:
         ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.upper()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.name} ({self.simon})"

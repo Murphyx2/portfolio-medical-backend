@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
 
+from apps.centers.models import MedicalCenter
 from apps.core.encryption import blind_index_digits
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
@@ -303,6 +304,23 @@ class PatientSerializer(CoreModelSerializer):
             raise serializers.ValidationError(
                 {"center": "You are not approved to work at this center."}
             )
+
+        # The center field is only editable by ADMIN in the frontend form
+        # (disabled otherwise) -- every other role relies on a client-side
+        # is_default auto-fill that silently fails for them because the
+        # /centers/ list endpoint is admin-only (403), leaving the field
+        # blank. Fill it in server-side on create only, and only for
+        # non-admins (who can never deliberately choose "no center" since
+        # the field is disabled for them) -- never on update, so an existing
+        # patient an admin deliberately left centerless (NULL = visible to
+        # all staff, see CLAUDE.md) doesn't get silently bound on the next
+        # unrelated PATCH by a non-admin.
+        if (
+            self.instance is None
+            and attrs.get("center") is None
+            and getattr(user, "role", None) != "ADMIN"
+        ):
+            attrs["center"] = MedicalCenter.objects.filter(is_default=True).first()
 
         # Cedula/guardian requiredness is only re-checked when the request is
         # a create or actually touches one of the relevant fields -- otherwise

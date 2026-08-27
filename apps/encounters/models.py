@@ -37,8 +37,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     encounter_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
     # Same catalog Services are categorized under (apps/services.ServiceType)
     # -- selecting one narrows the Services section to that type's services,
-    # and its requires_doctor/requires_diagnosis flags drive the doctor and
-    # admit-time diagnosis requirements below.
+    # and its requires_doctor flag drives the doctor requirement below.
     service_type = models.ForeignKey(
         "services.ServiceType", on_delete=models.PROTECT, related_name="encounters"
     )

@@ -161,7 +161,7 @@ def test_doctor_default_room_prefills_and_reports_name(auth_client, admin_user, 
     from apps.rooms.models import Room, RoomType
 
     center = MedicalCenter.objects.create(name="C", code="C1", address="A", phone="1")
-    room_type = RoomType.objects.get_or_create(name="Consulta")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULTA")[0]
     room = Room.objects.create(code="R1", name="Room 1", room_type=room_type, center=center)
     profile = _create_doctor_profile(doctor_user)
 
@@ -170,7 +170,7 @@ def test_doctor_default_room_prefills_and_reports_name(auth_client, admin_user, 
     )
     assert res.status_code == 200, res.data
     assert res.data["default_room"] == room.id
-    assert res.data["default_room_name"] == "Room 1"
+    assert res.data["default_room_name"] == "ROOM 1"
 
 
 def test_doctor_code_auto_generated_and_unique(make_user):

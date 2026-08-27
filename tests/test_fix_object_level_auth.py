@@ -28,7 +28,7 @@ def _make_patient():
 
 
 def _make_service():
-    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    service_type = ServiceType.objects.get_or_create(name="CONSULTA")[0]
     return Service.objects.create(
         simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )

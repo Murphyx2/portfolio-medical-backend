@@ -47,12 +47,12 @@ def _center(code="C1"):
 
 
 def _room(center):
-    room_type = RoomType.objects.get_or_create(name="Consulta")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULTA")[0]
     return Room.objects.create(code="R1", name="Room", room_type=room_type, center=center)
 
 
 def _service_type():
-    return ServiceType.objects.get_or_create(name="Consulta General", defaults={"requires_doctor": False})[0]
+    return ServiceType.objects.get_or_create(name="CONSULTA GENERAL", defaults={"requires_doctor": False})[0]
 
 
 def _appointment(patient, doctor, receptionist_user, **overrides):

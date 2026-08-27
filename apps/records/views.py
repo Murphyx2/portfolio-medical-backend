@@ -2,7 +2,7 @@ import mimetypes
 from pathlib import Path
 
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -160,6 +160,18 @@ class APCategoryViewSet(ReferenceDataViewSet):
     search_fields = ["name"]
     ordering_fields = ["name", "sort_order"]
 
+    def perform_create(self, serializer):
+        # sort_order is never client-supplied on create -- always the next
+        # free slot at the end of the catalog. Editing still lets an admin
+        # pick any order explicitly (perform_update is untouched). Mirrors
+        # AuditMixin.perform_create's body (can't use super() here since it
+        # calls serializer.save() with no way to inject sort_order).
+        next_order = (
+            APCategory.all_objects.aggregate(models.Max("sort_order"))["sort_order__max"] or 0
+        ) + 1
+        serializer.save(sort_order=next_order)
+        self._audit("CREATE", serializer.instance)
+
 
 class APTypeViewSet(ReferenceDataViewSet):
     queryset = APType.all_objects.select_related("category").all()
@@ -169,6 +181,19 @@ class APTypeViewSet(ReferenceDataViewSet):
     filterset_fields = ["category"]
     search_fields = ["name"]
     ordering_fields = ["name", "sort_order"]
+
+    def perform_create(self, serializer):
+        # Auto-increment scoped to the type's own category, matching how
+        # ApMultiSelect groups/orders types within each category group.
+        category = serializer.validated_data["category"]
+        next_order = (
+            APType.all_objects.filter(category=category).aggregate(models.Max("sort_order"))[
+                "sort_order__max"
+            ]
+            or 0
+        ) + 1
+        serializer.save(sort_order=next_order)
+        self._audit("CREATE", serializer.instance)
 
 
 @api_view(["GET"])

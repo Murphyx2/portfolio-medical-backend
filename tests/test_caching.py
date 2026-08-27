@@ -119,7 +119,7 @@ def test_room_type_list_cached_and_invalidated(auth_client, admin_user, db):
 
     client.patch(f"/api/room-types/{rt.id}/", {"name": "Emergencia"}, format="json")
     renamed = client.get("/api/room-types/").data["results"]
-    assert any(r["name"] == "Emergencia" for r in renamed)
+    assert any(r["name"] == "EMERGENCIA" for r in renamed)
 
     client.delete(f"/api/room-types/{rt.id}/")
     assert client.get("/api/room-types/").data["count"] == res1.data["count"]

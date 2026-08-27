@@ -24,25 +24,19 @@ def _center(code="C1"):
 
 
 def _room(center=None, code="R1"):
-    room_type = RoomType.objects.get_or_create(name="Consulta")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULTA")[0]
     return Room.objects.create(
         code=code, name="Room", room_type=room_type, center=center or _center()
     )
 
 
-def _service_type(name="Consulta General", requires_doctor=False, requires_diagnosis=True):
+def _service_type(name="Consulta General", requires_doctor=False):
     # get_or_create()'s `defaults` only applies on insert -- explicitly sync
-    # both flags on every call so a test overriding one for an already-seeded
+    # the flag on every call so a test overriding it for an already-seeded
     # name actually takes effect instead of silently keeping the prior value.
-    service_type, _ = ServiceType.objects.get_or_create(name=name)
-    changed = False
+    service_type, _ = ServiceType.objects.get_or_create(name=name.upper())
     if service_type.requires_doctor != requires_doctor:
         service_type.requires_doctor = requires_doctor
-        changed = True
-    if service_type.requires_diagnosis != requires_diagnosis:
-        service_type.requires_diagnosis = requires_diagnosis
-        changed = True
-    if changed:
         service_type.save()
     return service_type
 
@@ -233,8 +227,7 @@ def test_doctor_without_binding_does_not_see_other_centers_encounter(
 # ---------------------------------------------------------------------------
 # Admit lifecycle: room required, encounter_number assigned on admit.
 # A primary diagnosis is no longer required to admit (diagnosis capture was
-# removed from the admission flow entirely) regardless of the service
-# type's requires_diagnosis flag -- that flag is now unused by ready_for_active().
+# removed from the admission flow entirely).
 # ---------------------------------------------------------------------------
 
 
@@ -253,10 +246,9 @@ def test_admit_does_not_require_a_diagnosis(auth_client, admin_user, doctor_user
     center = _center()
     room = _room(center=center)
 
-    # requires_diagnosis=True type: admits fine with no diagnosis at all now.
     patient1 = _patient(cedula="00100000031")
     encounter1 = Encounter.objects.create(
-        service_type=_service_type(requires_diagnosis=True),
+        service_type=_service_type(),
         patient=patient1, doctor=doctor, room=room, created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter1.id}/admit/")
@@ -264,10 +256,9 @@ def test_admit_does_not_require_a_diagnosis(auth_client, admin_user, doctor_user
     assert res.data["status"] == "ACTIVE"
     assert res.data["encounter_number"]
 
-    # requires_diagnosis=False type: admits with no diagnosis, as before.
     patient2 = _patient(cedula="00100000032")
     encounter2 = Encounter.objects.create(
-        service_type=_service_type(name="Vacunación", requires_diagnosis=False),
+        service_type=_service_type(name="Vacunación"),
         patient=patient2, doctor=doctor, room=room, created_by=admin_user,
     )
     res = auth_client(admin_user).post(f"/api/encounters/{encounter2.id}/admit/")
@@ -278,7 +269,7 @@ def test_same_day_active_conflict_requires_override(auth_client, admin_user, doc
     doctor = _doctor(doctor_user)
     room = _room()
     patient = _patient()
-    service_type = _service_type(name="Chequeo rápido", requires_diagnosis=False)
+    service_type = _service_type(name="Chequeo rápido")
 
     first = Encounter.objects.create(
         service_type=service_type, patient=patient, doctor=doctor, room=room,
@@ -304,7 +295,7 @@ def test_cancel_and_complete_lifecycle(auth_client, admin_user, doctor_user):
     room = _room()
     patient = _patient()
     encounter = Encounter.objects.create(
-        service_type=_service_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(), patient=patient,
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
@@ -337,7 +328,7 @@ def test_cannot_edit_completed_encounter(auth_client, admin_user, doctor_user):
     room = _room()
     patient = _patient()
     encounter = Encounter.objects.create(
-        service_type=_service_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(), patient=patient,
         doctor=doctor, room=room, created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
@@ -370,7 +361,7 @@ def test_create_with_nested_diagnoses_and_services(auth_client, admin_user, doct
     assert res.data["diagnoses"][0]["description"] == "Migraine"
     assert len(res.data["services"]) == 1
     assert res.data["services"][0]["quantity"] == 2
-    assert res.data["services"][0]["service_name"] == "Consulta"
+    assert res.data["services"][0]["service_name"] == "CONSULTA"
 
 
 def test_update_replaces_nested_diagnoses(auth_client, admin_user, doctor_user):
@@ -494,7 +485,7 @@ def test_encounter_number_is_date_and_daily_sequence(auth_client, admin_user, do
 
     doctor = _doctor(doctor_user)
     room = _room()
-    service_type = _service_type(requires_diagnosis=False)
+    service_type = _service_type()
     today = timezone.localdate()
 
     first = Encounter.objects.create(
@@ -541,7 +532,7 @@ def test_search_by_doctor_code_and_encounter_number(auth_client, admin_user, doc
     doctor = _doctor(doctor_user)
     patient = _patient()
     encounter = Encounter.objects.create(
-        service_type=_service_type(requires_diagnosis=False), patient=patient,
+        service_type=_service_type(), patient=patient,
         doctor=doctor, room=_room(), created_by=admin_user,
     )
     auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
