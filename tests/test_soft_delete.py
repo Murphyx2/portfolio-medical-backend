@@ -450,17 +450,16 @@ def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
 
 @pytest.mark.parametrize(
     "non_admin",
-    ["doctor", "receptionist", "it", "center_manager"],
+    ["doctor", "receptionist", "it"],
 )
 def test_restore_forbidden_for_all_non_admin_roles_on_every_resource(
     auth_client, admin_user, doctor_user, receptionist_user, it_user,
-    center_manager_user, non_admin,
+    non_admin,
 ):
     users = {
         "doctor": doctor_user,
         "receptionist": receptionist_user,
         "it": it_user,
-        "center_manager": center_manager_user,
     }
     urls = _seed_restore_targets(admin_user, doctor_user, receptionist_user)
     for name, url in urls.items():
@@ -474,6 +473,17 @@ def test_restore_allowed_for_admin_on_every_resource(
     urls = _seed_restore_targets(admin_user, doctor_user, receptionist_user)
     for name, url in urls.items():
         res = auth_client(admin_user).post(url)
+        assert res.status_code == 200, (name, res.data)
+
+
+def test_restore_allowed_for_center_manager_on_every_resource(
+    auth_client, admin_user, doctor_user, receptionist_user, center_manager_user
+):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it can restore soft-deleted rows like admin can.
+    urls = _seed_restore_targets(admin_user, doctor_user, receptionist_user)
+    for name, url in urls.items():
+        res = auth_client(center_manager_user).post(url)
         assert res.status_code == 200, (name, res.data)
         # restore doesn't cascade -- child rows stay inactive
         obj = None

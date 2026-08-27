@@ -306,23 +306,35 @@ def test_weak_password_rejected_on_create(auth_client, admin_user):
 
 
 # ---------------------------------------------------------------------------
-# M-05: names / birth date masked for IT and CENTER_MANAGER
+# M-05: names / birth date masked for IT; CENTER_MANAGER is admin-equivalent
+# app-wide (except Settings edit) and sees full PII.
 # ---------------------------------------------------------------------------
 
-def test_it_and_cm_see_masked_names(auth_client, make_user):
+def test_it_sees_masked_names(auth_client, make_user):
     it = make_user("it", "IT")
+    patient = _make_patient(birth_date="1990-05-12")
+
+    res = auth_client(it).get(f"/api/patients/{patient.id}/")
+    assert res.status_code == 200
+    assert res.data["first_name"] != "Jane"
+    assert "•" in res.data["first_name"]
+    assert res.data["last_name"] != "Doe"
+    assert res.data["full_name"] != "Jane Doe"
+    assert res.data["birth_date"] != "1990-05-12"
+    assert res.data["age"] is None
+
+
+def test_center_manager_sees_full_names(auth_client, make_user):
     cm = make_user("cm", "CENTER_MANAGER")
     patient = _make_patient(birth_date="1990-05-12")
 
-    for user in (it, cm):
-        res = auth_client(user).get(f"/api/patients/{patient.id}/")
-        assert res.status_code == 200
-        assert res.data["first_name"] != "Jane"
-        assert "•" in res.data["first_name"]
-        assert res.data["last_name"] != "Doe"
-        assert res.data["full_name"] != "Jane Doe"
-        assert res.data["birth_date"] != "1990-05-12"
-        assert res.data["age"] is None
+    res = auth_client(cm).get(f"/api/patients/{patient.id}/")
+    assert res.status_code == 200
+    assert res.data["first_name"] == "Jane"
+    assert res.data["last_name"] == "Doe"
+    assert res.data["full_name"] == "Jane Doe"
+    assert res.data["birth_date"] == "1990-05-12"
+    assert res.data["age"] is not None
 
 
 def test_doctor_sees_full_names(auth_client, doctor_user):

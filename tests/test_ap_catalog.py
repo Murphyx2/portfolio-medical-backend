@@ -36,12 +36,21 @@ def test_doctor_and_nurse_can_view_but_not_write_category(auth_client, doctor_us
         assert res.status_code == 403, res.data
 
 
-def test_receptionist_it_center_manager_cannot_view_catalog(
-    auth_client, receptionist_user, it_user, center_manager_user
-):
-    for user in (receptionist_user, it_user, center_manager_user):
+def test_receptionist_it_cannot_view_catalog(auth_client, receptionist_user, it_user):
+    for user in (receptionist_user, it_user):
         res = auth_client(user).get("/api/ap-categories/")
         assert res.status_code == 403, res.data
+
+
+def test_center_manager_can_view_and_manage_catalog(auth_client, center_manager_user):
+    # CENTER_MANAGER is admin-equivalent app-wide except Settings edit.
+    res = auth_client(center_manager_user).get("/api/ap-categories/")
+    assert res.status_code == 200, res.data
+    category = APCategory.objects.create(name="CM Category")
+    res = auth_client(center_manager_user).post(
+        "/api/ap-types/", {"category": category.id, "name": "CM Type"}, format="json"
+    )
+    assert res.status_code == 201, res.data
 
 
 def test_admin_can_create_and_manage_type(auth_client, admin_user):

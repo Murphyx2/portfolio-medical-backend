@@ -185,7 +185,7 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
         ("nurse_user", False),
         ("receptionist_user", False),
         ("it_user", True),
-        ("center_manager_user", True),
+        ("center_manager_user", False),
     ],
 )
 def test_is_masked_role_per_role(request, role_fixture, expected):

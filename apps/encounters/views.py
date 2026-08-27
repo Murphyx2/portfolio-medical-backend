@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from apps.appointments.services import complete_todays_appointments_for_patient
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
-from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
+from apps.core.permissions import CanManageEncounters, IsAdminOrITOrCenterManager, IsStaffUser
 from apps.core.services import scope_queryset
 from apps.encounters.filters import EncounterSearchFilter
 from apps.encounters.models import Encounter, EncounterAdmitError
@@ -26,7 +26,7 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     serializer_class = EncounterSerializer
     permission_classes = [IsStaffUser]
     write_permission_classes = [CanManageEncounters]
-    delete_permission_classes = [IsAdminOrIT]
+    delete_permission_classes = [IsAdminOrITOrCenterManager]
     filter_backends = [DjangoFilterBackend, EncounterSearchFilter, OrderingFilter]
     filterset_fields = {
         "patient": ["exact"],

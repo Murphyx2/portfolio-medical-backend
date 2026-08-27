@@ -137,24 +137,6 @@ class DoctorProfileSerializer(CoreModelSerializer):
                 )
         return value
 
-    def validate(self, attrs):
-        # The view's write permission (IsAdminOrITOrCenterManager) admits a
-        # CENTER_MANAGER at the request level so they can reach the
-        # `services`/`rooms` fields above -- this is what actually confines
-        # them to *only* those fields, since they otherwise have none of
-        # IT's general doctor-profile write access.
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and getattr(user, "is_center_manager", False) and not getattr(
-            user, "is_admin", False
-        ):
-            other_fields = set(self.initial_data.keys()) - {"services", "rooms"}
-            if other_fields:
-                raise serializers.ValidationError(
-                    "Center managers may only edit a doctor's services and rooms."
-                )
-        return attrs
-
     def validate_user(self, value):
         if self.instance and self.instance.user_id == value.id:
             return value

@@ -4,10 +4,13 @@ def can_view_inactive(user) -> bool:
     Every check for "may this user see/restore deactivated rows" (ViewSet
     querysets, the caching bypass, the restore permission, every serializer's
     writable-active gate) funnels through this one function -- none of those
-    call sites re-check the role directly.
+    call sites re-check the role directly. ADMIN and CENTER_MANAGER (treated
+    as admin-equivalent app-wide, except Settings) both qualify.
     """
     return bool(
-        user and getattr(user, "is_authenticated", False) and getattr(user, "is_admin", False)
+        user
+        and getattr(user, "is_authenticated", False)
+        and (getattr(user, "is_admin", False) or getattr(user, "is_center_manager", False))
     )
 
 

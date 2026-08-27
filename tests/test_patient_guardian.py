@@ -197,14 +197,16 @@ def test_guardian_fields_masked_for_it(auth_client, it_user, receptionist_user):
     assert res.data["age"] is None
 
 
-def test_guardian_fields_masked_for_center_manager(auth_client, center_manager_user, receptionist_user):
+def test_guardian_fields_full_for_center_manager(auth_client, center_manager_user, receptionist_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it sees unmasked guardian PII like admin.
     payload = {**_payload(cedula="01098765410"), "guardians": [_guardian()]}
     created = auth_client(receptionist_user).post("/api/patients/", payload, format="json")
     assert created.status_code == 201, created.data
 
     res = auth_client(center_manager_user).get(f"/api/patients/{created.data['id']}/")
     assert res.status_code == 200, res.data
-    assert MASK in res.data["guardians"][0]["cedula"]
+    assert res.data["guardians"][0]["cedula"] == "00112345678"
 
 
 def test_adult_cedula_still_required(auth_client, receptionist_user):

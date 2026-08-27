@@ -286,17 +286,19 @@ def test_any_staff_role_can_read_doctor_services(auth_client, admin_user, it_use
     assert res.data["services_detail"] == [{"id": service.id, "name": service.name}]
 
 
-def test_center_manager_cannot_edit_other_doctor_fields(auth_client, center_manager_user, doctor_user):
+def test_center_manager_can_edit_other_doctor_fields(auth_client, center_manager_user, doctor_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it's no longer confined to just services/rooms on a doctor profile.
     profile = _create_doctor_profile(doctor_user)
     service = _service()
     res = auth_client(center_manager_user).patch(
         f"/api/doctors/profiles/{profile.id}/",
-        {"services": [service.id], "license_number": "LIC-HIJACK"},
+        {"services": [service.id], "license_number": "LIC-CM-OK"},
         format="json",
     )
-    assert res.status_code == 400, res.data
+    assert res.status_code == 200, res.data
     profile.refresh_from_db()
-    assert profile.license_number != "LIC-HIJACK"
+    assert profile.license_number == "LIC-CM-OK"
 
 
 def test_doctor_services_write_excludes_inactive_service(auth_client, admin_user, doctor_user):
@@ -375,14 +377,14 @@ def test_any_staff_role_can_read_doctor_rooms(auth_client, admin_user, it_user, 
     assert res.data["rooms_detail"] == [{"id": room.id, "name": room.name}]
 
 
-def test_center_manager_cannot_edit_other_doctor_fields_via_rooms(auth_client, center_manager_user, doctor_user):
+def test_center_manager_can_edit_other_doctor_fields_via_rooms(auth_client, center_manager_user, doctor_user):
     profile = _create_doctor_profile(doctor_user)
     room = _room()
     res = auth_client(center_manager_user).patch(
         f"/api/doctors/profiles/{profile.id}/",
-        {"rooms": [room.id], "license_number": "LIC-HIJACK"},
+        {"rooms": [room.id], "license_number": "LIC-CM-OK-2"},
         format="json",
     )
-    assert res.status_code == 400, res.data
+    assert res.status_code == 200, res.data
     profile.refresh_from_db()
-    assert profile.license_number != "LIC-HIJACK"
+    assert profile.license_number == "LIC-CM-OK-2"

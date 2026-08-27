@@ -16,8 +16,8 @@ from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanManageRecordEntries,
     CanManageRecords,
-    IsAdmin,
     IsAdminDoctorOrNurse,
+    IsAdminOrCenterManager,
 )
 from apps.core.viewsets import ReferenceDataViewSet
 from apps.records.filters import NullsLastOrderingFilter, RecordSearchFilter
@@ -53,9 +53,10 @@ class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewS
     serializer_class = MedicalRecordSerializer
     permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
-    # Spec §3: soft-deleting an expediente is Admin-only, narrower than the
-    # Admin/Doctor/Nurse write gate that covers create/edit.
-    delete_permission_classes = [IsAdmin]
+    # Spec §3: soft-deleting an expediente is Admin/CenterManager-only,
+    # narrower than the Admin/Doctor/Nurse/CenterManager write gate that
+    # covers create/edit.
+    delete_permission_classes = [IsAdminOrCenterManager]
     filter_backends = [DjangoFilterBackend, RecordSearchFilter, NullsLastOrderingFilter]
     filterset_fields = ["patient", "center"]
     ordering_fields = ["last_visit_at", "patient__search_name", "created_by__username"]
@@ -156,7 +157,7 @@ class APCategoryViewSet(ReferenceDataViewSet):
     queryset = APCategory.all_objects.all()
     serializer_class = APCategorySerializer
     permission_classes = [IsAdminDoctorOrNurse]
-    write_permission_classes = [IsAdmin]
+    write_permission_classes = [IsAdminOrCenterManager]
     search_fields = ["name"]
     ordering_fields = ["name", "sort_order"]
 
@@ -181,7 +182,7 @@ class APTypeViewSet(ReferenceDataViewSet):
     queryset = APType.all_objects.select_related("category").all()
     serializer_class = APTypeSerializer
     permission_classes = [IsAdminDoctorOrNurse]
-    write_permission_classes = [IsAdmin]
+    write_permission_classes = [IsAdminOrCenterManager]
     filterset_fields = ["category"]
     search_fields = ["name"]
     ordering_fields = ["name", "sort_order"]

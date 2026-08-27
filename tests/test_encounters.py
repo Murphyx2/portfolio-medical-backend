@@ -447,7 +447,7 @@ def test_chief_complaint_masked_for_receptionist(auth_client, admin_user, doctor
     assert res.data["chief_complaint"] == "Chest pain"
 
 
-def test_patient_summary_masked_for_it_and_center_manager(
+def test_patient_summary_masked_for_it_but_not_center_manager(
     auth_client, admin_user, doctor_user, it_user, center_manager_user
 ):
     doctor = _doctor(doctor_user)
@@ -455,12 +455,14 @@ def test_patient_summary_masked_for_it_and_center_manager(
     encounter = Encounter.objects.create(
         service_type=_service_type(), patient=patient, doctor=doctor, created_by=admin_user
     )
-    for user in (it_user, center_manager_user):
-        res = auth_client(user).get(f"/api/encounters/{encounter.id}/")
-        assert res.data["patient_info"]["allergies"] != "Penicillin", user.role
+    res = auth_client(it_user).get(f"/api/encounters/{encounter.id}/")
+    assert res.data["patient_info"]["allergies"] != "Penicillin"
 
-    res = auth_client(admin_user).get(f"/api/encounters/{encounter.id}/")
-    assert res.data["patient_info"]["allergies"] == "Penicillin"
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it sees full PII like admin, unlike IT.
+    for user in (admin_user, center_manager_user):
+        res = auth_client(user).get(f"/api/encounters/{encounter.id}/")
+        assert res.data["patient_info"]["allergies"] == "Penicillin", user.role
 
 
 # ---------------------------------------------------------------------------
