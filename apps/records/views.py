@@ -4,57 +4,138 @@ from pathlib import Path
 from django.conf import settings
 from django.db import transaction
 from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
+    CanManageRecordEntries,
     CanManageRecords,
     IsAdmin,
     IsAdminDoctorOrNurse,
 )
 from apps.core.viewsets import ReferenceDataViewSet
 from apps.records.filters import RecordSearchFilter
-from apps.records.models import APCategory, APType, ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import (
+    APCategory,
+    APType,
+    MedicalRecord,
+    RecordEntry,
+    RecordFamilyCondition,
+    RecordImage,
+    RecordPersonalCondition,
+)
 from apps.records.serializers import (
     APCategorySerializer,
     APTypeSerializer,
-    ConsultationLogSerializer,
     MedicalRecordSerializer,
+    RecordEntrySerializer,
+    RecordFamilyConditionSerializer,
     RecordImageSerializer,
+    RecordPersonalConditionSerializer,
 )
 
 
 class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = MedicalRecord.all_objects.select_related(
         "patient", "created_by", "center"
-    ).prefetch_related("images")
+    ).prefetch_related(
+        "images",
+        "personal_conditions__ap_type",
+        "family_conditions__ap_type",
+        "patient__guardians",
+    )
     serializer_class = MedicalRecordSerializer
     permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
+    # Spec §3: soft-deleting an expediente is Admin-only, narrower than the
+    # Admin/Doctor/Nurse write gate that covers create/edit.
+    delete_permission_classes = [IsAdmin]
     filter_backends = [DjangoFilterBackend, RecordSearchFilter, OrderingFilter]
-    filterset_fields = ["patient", "center", "title"]
-    ordering_fields = ["date", "title", "patient__search_name", "created_by__username"]
+    filterset_fields = ["patient", "center"]
+    ordering_fields = ["last_visit_at", "patient__search_name", "created_by__username"]
 
     @transaction.atomic
     def perform_create(self, serializer):
         self.perform_create_with_owner(serializer, "created_by")
 
 
-class ConsultationLogViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
-    queryset = ConsultationLog.all_objects.select_related("patient", "doctor", "center")
-    serializer_class = ConsultationLogSerializer
+class RecordEntryViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
+    queryset = RecordEntry.objects.select_related("record", "author")
+    serializer_class = RecordEntrySerializer
     permission_classes = [IsAdminDoctorOrNurse]
-    write_permission_classes = [CanManageRecords]
-    filterset_fields = ["patient", "center", "doctor"]
+    write_permission_classes = [CanManageRecordEntries]
+    filterset_fields = ["record", "status"]
+    ordering_fields = ["completed_at", "created_at"]
 
     @transaction.atomic
     def perform_create(self, serializer):
-        self.perform_create_with_owner(serializer, "doctor")
+        self.perform_create_with_owner(serializer, "author")
+
+    @action(detail=False, methods=["post"])
+    def draft(self, request):
+        """Idempotent per-user draft upsert -- spec §11: "Exactly one draft
+        per expediente per user." Vitals/dx/tx/observaciones are whatever
+        the client currently has typed; never touches MedicalRecord's
+        last-* cache (only complete() does). Routed through the serializer
+        (partial=True) so field-level range validation still applies to a
+        draft, same as a completed save -- only the object as a whole being
+        incomplete (e.g. one TA part typed so far) is tolerated here, since
+        RecordEntrySerializer's cross-field TA-pair check runs regardless;
+        the frontend debounce is expected to hold off sending a lone half of
+        a TA pair rather than the API silently accepting bad data.
+        """
+        record_id = request.data.get("record")
+        if not record_id:
+            return Response({"record": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
+        record = get_object_or_404(MedicalRecord.objects, pk=record_id)
+        instance = RecordEntry.objects.filter(
+            record=record, author=request.user, status=RecordEntry.Status.DRAFT
+        ).first()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        entry = serializer.save(record=record, author=request.user, status=RecordEntry.Status.DRAFT)
+        self.log_action(entry, "UPDATE", details={"draft": True})
+        return Response(self.get_serializer(entry).data)
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        """Draft -> completed (or resave of the last completed entry, for
+        "Editar última entrada" -- see RecordEntry.complete())."""
+        entry = self.get_object()
+        serializer = self.get_serializer(entry, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        try:
+            entry.complete(request.user)
+        except ValueError:
+            return Response(
+                {"detail": "No hay cambios para guardar.", "code": "NO_CHANGES"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self.log_action(entry, "UPDATE", details={"completed": True})
+        return Response(self.get_serializer(entry).data)
+
+
+class RecordPersonalConditionViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
+    queryset = RecordPersonalCondition.objects.select_related("record", "ap_type")
+    serializer_class = RecordPersonalConditionSerializer
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [CanManageRecords]
+    filterset_fields = ["record"]
+
+
+class RecordFamilyConditionViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
+    queryset = RecordFamilyCondition.objects.select_related("record", "ap_type", "related_patient")
+    serializer_class = RecordFamilyConditionSerializer
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [CanManageRecords]
+    filterset_fields = ["record"]
 
 
 class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):

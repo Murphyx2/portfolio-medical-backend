@@ -1,8 +1,10 @@
 """Security fixes M-02 / M-03 / M-05 / M-07.
 
-- M-02: a nurse may create records but may update/destroy only records they
+- M-02: a nurse may create/update records but may only update ones they
   created (the data model has no nurse-to-center relationship yet); doctors
-  keep center scoping; admins are unrestricted.
+  keep center scoping; admins are unrestricted. DELETE itself was later
+  narrowed further by the Expedientes Médicos spec to Admin-only for every
+  role, superseding "own records" for that one verb.
 - M-03: doctor contact PII (license_number / contact_phone / contact_email /
   bio) is masked for staff who are not admin/IT or the doctor themself.
 - M-05: API and media responses carry ``Cache-Control: private, no-store``.
@@ -50,14 +52,17 @@ def _doctor_profile(user):
     )
 
 
-def _record(patient, user, center=None, title="R"):
-    return MedicalRecord.objects.create(
-        patient=patient, created_by=user, title=title, diagnosis="d", center=center
-    )
+def _record(patient, user, center=None):
+    return MedicalRecord.objects.create(patient=patient, created_by=user, center=center)
 
 
 # ---------------------------------------------------------------------------
 # M-02: nurse write-scoping (own records only)
+#
+# MedicalRecord carries no clinical content field of its own anymore (that
+# moved to RecordEntry as part of the Expedientes Médicos refactor) -- these
+# tests now PATCH `center` (still a plain writable field on the anchor row)
+# to exercise the same edit-scoping rule that used to PATCH `title`.
 # ---------------------------------------------------------------------------
 
 
@@ -65,12 +70,13 @@ def test_nurse_cannot_edit_record_created_by_another(auth_client, nurse_user, ma
     other = make_user("doctor", "DOCTOR")
     patient = _patient()
     record = _record(patient, other)
+    center = _center()
     res = auth_client(nurse_user).patch(
-        f"/api/medical-records/{record.id}/", {"title": "Hacked"}, format="json"
+        f"/api/medical-records/{record.id}/", {"center": center.id}, format="json"
     )
     assert res.status_code == 403, res.data
     record.refresh_from_db()
-    assert record.title == "R"
+    assert record.center_id is None
 
 
 def test_nurse_cannot_delete_record_created_by_another(auth_client, nurse_user, make_user):
@@ -85,18 +91,32 @@ def test_nurse_cannot_delete_record_created_by_another(auth_client, nurse_user, 
 def test_nurse_can_edit_own_record(auth_client, nurse_user):
     patient = _patient()
     record = _record(patient, nurse_user)
+    center = _center()
     res = auth_client(nurse_user).patch(
-        f"/api/medical-records/{record.id}/", {"title": "Updated"}, format="json"
+        f"/api/medical-records/{record.id}/", {"center": center.id}, format="json"
     )
     assert res.status_code == 200, res.data
     record.refresh_from_db()
-    assert record.title == "Updated"
+    assert record.center_id == center.id
 
 
-def test_nurse_can_delete_own_record(auth_client, nurse_user):
+def test_nurse_cannot_delete_own_record(auth_client, nurse_user):
+    # Narrowed by the Expedientes Médicos spec (section 3): soft-deleting an
+    # expediente is Admin-only now, even for a nurse deleting their own
+    # record -- delete_permission_classes=[IsAdmin] on MedicalRecordViewSet
+    # supersedes the M-02 "own records" write scope for DELETE specifically.
     patient = _patient()
     record = _record(patient, nurse_user)
     res = auth_client(nurse_user).delete(f"/api/medical-records/{record.id}/")
+    assert res.status_code == 403
+    assert MedicalRecord.objects.filter(pk=record.id).exists()
+
+
+def test_admin_can_delete_any_record(auth_client, admin_user, make_user):
+    other = make_user("doctor", "DOCTOR")
+    patient = _patient()
+    record = _record(patient, other)
+    res = auth_client(admin_user).delete(f"/api/medical-records/{record.id}/")
     assert res.status_code == 204
     # Soft-delete: the row still exists, just deactivated -- not gone.
     assert not MedicalRecord.objects.filter(pk=record.id).exists()
@@ -106,9 +126,7 @@ def test_nurse_can_delete_own_record(auth_client, nurse_user):
 def test_nurse_can_create_record(auth_client, nurse_user):
     patient = _patient()
     res = auth_client(nurse_user).post(
-        "/api/medical-records/",
-        {"patient": patient.id, "title": "New", "diagnosis": "d"},
-        format="json",
+        "/api/medical-records/", {"patient": patient.id}, format="json"
     )
     assert res.status_code == 201, res.data
 
@@ -117,16 +135,18 @@ def test_admin_can_edit_any_record(auth_client, admin_user, make_user):
     other = make_user("doctor", "DOCTOR")
     patient = _patient()
     record = _record(patient, other)
+    center = _center()
     res = auth_client(admin_user).patch(
-        f"/api/medical-records/{record.id}/", {"title": "AdminEdit"}, format="json"
+        f"/api/medical-records/{record.id}/", {"center": center.id}, format="json"
     )
     assert res.status_code == 200, res.data
 
 
 def test_can_manage_records_resolves_owner_for_all_models(nurse_user):
     # The object-level rule must recognize the owner field of every model the
-    # permission guards (MedicalRecord.created_by, ConsultationLog.doctor,
-    # RecordImage.uploaded_by).
+    # permission guards: MedicalRecord.created_by, RecordImage.uploaded_by,
+    # and (falling back to the parent record's creator) RecordPersonalCondition/
+    # RecordFamilyCondition, which have no owner field of their own.
     perm = CanManageRecords()
 
     class FakeRequest:
@@ -134,14 +154,24 @@ def test_can_manage_records_resolves_owner_for_all_models(nurse_user):
 
     req = FakeRequest()
     req.user = nurse_user
-    theirs = SimpleNamespace(created_by_id=999, uploaded_by_id=None, doctor_id=None)
+    theirs = SimpleNamespace(created_by_id=999, uploaded_by_id=None, doctor_id=None, record=None)
     assert perm.has_object_permission(req, None, theirs) is False
-    own_created = SimpleNamespace(created_by_id=nurse_user.id, uploaded_by_id=None, doctor_id=None)
+    own_created = SimpleNamespace(created_by_id=nurse_user.id, uploaded_by_id=None, doctor_id=None, record=None)
     assert perm.has_object_permission(req, None, own_created) is True
-    own_uploaded = SimpleNamespace(created_by_id=None, uploaded_by_id=nurse_user.id, doctor_id=None)
+    own_uploaded = SimpleNamespace(created_by_id=None, uploaded_by_id=nurse_user.id, doctor_id=None, record=None)
     assert perm.has_object_permission(req, None, own_uploaded) is True
-    own_logged = SimpleNamespace(created_by_id=None, uploaded_by_id=None, doctor_id=nurse_user.id)
+    own_logged = SimpleNamespace(created_by_id=None, uploaded_by_id=None, doctor_id=nurse_user.id, record=None)
     assert perm.has_object_permission(req, None, own_logged) is True
+    own_condition = SimpleNamespace(
+        created_by_id=None, uploaded_by_id=None, doctor_id=None,
+        record=SimpleNamespace(created_by_id=nurse_user.id),
+    )
+    assert perm.has_object_permission(req, None, own_condition) is True
+    foreign_condition = SimpleNamespace(
+        created_by_id=None, uploaded_by_id=None, doctor_id=None,
+        record=SimpleNamespace(created_by_id=999),
+    )
+    assert perm.has_object_permission(req, None, foreign_condition) is False
 
 
 # ---------------------------------------------------------------------------

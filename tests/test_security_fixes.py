@@ -163,7 +163,7 @@ def test_doctor_image_for_foreign_record_allowed(auth_client, make_user):
     patient = _make_patient(center=center)
     foreign_patient = _make_patient(first_name="F", last_name="F", center=other)
     foreign_record = MedicalRecord.objects.create(
-        patient=foreign_patient, created_by=other_doc, title="x", diagnosis="y", center=other
+        patient=foreign_patient, created_by=other_doc, center=other
     )
 
     buf = BytesIO()
@@ -189,13 +189,11 @@ def test_record_image_list_is_unscoped_for_doctor(auth_client, make_user):
     _make_binding(_make_profile(doc), center)
 
     own_record = MedicalRecord.objects.create(
-        patient=_make_patient(center=center), created_by=doc, title="own", diagnosis="x", center=center
+        patient=_make_patient(center=center), created_by=doc, center=center
     )
     other_record = MedicalRecord.objects.create(
         patient=_make_patient(first_name="O", last_name="T", center=other),
         created_by=other_doc,
-        title="other",
-        diagnosis="x",
         center=other,
     )
     own_img = RecordImage.objects.create(record=own_record, image="records/1/a.png")
@@ -217,9 +215,7 @@ def test_media_requires_signed_token(auth_client, make_user, monkeypatch, tmp_pa
     center = _make_center("C1")
     _make_binding(_make_profile(doc), center)
     patient = _make_patient(center=center)
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doc, title="t", diagnosis="d", center=center
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doc, center=center)
     img_dir = tmp_path / "records" / str(patient.id)
     img_dir.mkdir(parents=True, exist_ok=True)
     (img_dir / "abc.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 100)

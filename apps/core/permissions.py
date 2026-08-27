@@ -171,8 +171,53 @@ class CanManageRecords(RoleUnionPermission):
                 owner_id = getattr(obj, "uploaded_by_id", None)
             if owner_id is None:
                 owner_id = getattr(obj, "doctor_id", None)
+            if owner_id is None:
+                # RecordPersonalCondition/RecordFamilyCondition (Expedientes
+                # Médicos AP entries) have no owner field of their own --
+                # fall back to their parent MedicalRecord's creator, the same
+                # scope a nurse already has for the record itself.
+                record = getattr(obj, "record", None)
+                owner_id = getattr(record, "created_by_id", None)
             return owner_id == user.id
         return False
+
+
+class CanManageRecordEntries(RoleUnionPermission):
+    """Write access to a RecordEntry (Expediente historial item): ADMIN/
+    DOCTOR/NURSE, same role set as CanManageRecords, but with its own
+    object-level rule since a draft and a completed entry have very
+    different mutability:
+
+    - A DRAFT may only be edited/deleted by its own author (or an admin) --
+      "one draft per expediente per user" means another clinician's draft
+      is invisible/untouchable to you.
+    - A COMPLETED entry may only be edited (never deleted) by any allowed
+      role, and only when it's still the record's single most recent
+      completed entry ("Editar última entrada"); older entries are
+      read-only to everyone, admin included.
+    """
+
+    allowed_roles = (User.Role.DOCTOR, User.Role.NURSE, User.Role.ADMIN)
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        is_admin = getattr(user, "is_admin", False)
+        if obj.status == obj.Status.DRAFT:
+            if request.method == "DELETE":
+                return is_admin or obj.author_id == user.id
+            return is_admin or obj.author_id == user.id
+        # COMPLETED: never deletable; editable only while still the latest.
+        if request.method == "DELETE":
+            return False
+        latest_id = (
+            obj.record.entries.filter(status=obj.Status.COMPLETED)
+            .order_by("-completed_at")
+            .values_list("id", flat=True)
+            .first()
+        )
+        return obj.id == latest_id
 
 
 class IsAdminDoctorOrNurse(RoleUnionPermission):

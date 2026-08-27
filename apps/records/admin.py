@@ -1,7 +1,15 @@
 from django.contrib import admin
 
 from apps.core.admin import AuditModelAdmin
-from apps.records.models import APCategory, APType, ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import (
+    APCategory,
+    APType,
+    MedicalRecord,
+    RecordEntry,
+    RecordFamilyCondition,
+    RecordImage,
+    RecordPersonalCondition,
+)
 
 
 class RecordImageInline(admin.TabularInline):
@@ -11,17 +19,32 @@ class RecordImageInline(admin.TabularInline):
 
 @admin.register(MedicalRecord)
 class MedicalRecordAdmin(AuditModelAdmin):
-    list_display = ("title", "patient", "created_by", "date", "active")
+    list_display = ("patient", "created_by", "last_visit_at", "active")
     list_filter = ("active",)
-    search_fields = ("title", "patient__first_name", "patient__last_name")
+    search_fields = ("patient__first_name", "patient__last_name")
     inlines = [RecordImageInline]
 
 
-@admin.register(ConsultationLog)
-class ConsultationLogAdmin(AuditModelAdmin):
-    list_display = ("patient", "doctor", "date", "active")
-    list_filter = ("active",)
-    search_fields = ("patient__first_name", "patient__last_name", "doctor__username")
+@admin.register(RecordEntry)
+class RecordEntryAdmin(admin.ModelAdmin):
+    # Plain ModelAdmin, not AuditModelAdmin: RecordEntry has no `active`
+    # field (drafts hard-delete, completed entries are immutable/never
+    # deleted), so AuditModelAdmin's soft-delete-on-delete_model() would
+    # silently no-op instead of removing the row.
+    list_display = ("record", "author", "status", "completed_at")
+    list_filter = ("status",)
+
+
+@admin.register(RecordPersonalCondition)
+class RecordPersonalConditionAdmin(admin.ModelAdmin):
+    list_display = ("record", "ap_type", "custom_label", "is_custom")
+    list_filter = ("is_custom",)
+
+
+@admin.register(RecordFamilyCondition)
+class RecordFamilyConditionAdmin(admin.ModelAdmin):
+    list_display = ("record", "relationship", "ap_type", "custom_label", "is_custom")
+    list_filter = ("relationship", "is_custom")
 
 
 @admin.register(RecordImage)

@@ -25,7 +25,7 @@ from apps.doctors.models import DoctorProfile, DoctorSchedule
 from apps.encounters.models import Encounter
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
-from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import MedicalRecord, RecordImage
 from apps.rooms.models import Room, RoomType
 from apps.services.models import Service, ServiceType
 
@@ -57,10 +57,8 @@ def _doctor_profile(user, license_suffix=None):
     )
 
 
-def _record(patient, user, center=None, title="R"):
-    return MedicalRecord.objects.create(
-        patient=patient, created_by=user, title=title, diagnosis="d", center=center
-    )
+def _record(patient, user, center=None):
+    return MedicalRecord.objects.create(patient=patient, created_by=user, center=center)
 
 
 def _appointment(patient, doctor_profile, created_by):
@@ -73,18 +71,17 @@ def _appointment(patient, doctor_profile, created_by):
 
 
 # ---------------------------------------------------------------------------
-# Cascade: Patient -> MedicalRecord -> RecordImage, ConsultationLog, Appointment
+# Cascade: Patient -> MedicalRecord -> RecordImage, Appointment
 # ---------------------------------------------------------------------------
 
 
-def test_deleting_patient_cascades_to_records_logs_appointments_and_images(
+def test_deleting_patient_cascades_to_records_appointments_and_images(
     auth_client, admin_user, receptionist_user, doctor_user
 ):
     patient = _patient()
     doctor = _doctor_profile(doctor_user)
     record = _record(patient, receptionist_user)
     image = RecordImage.objects.create(record=record, image="test.jpg", caption="x")
-    log = ConsultationLog.objects.create(patient=patient, doctor=doctor_user)
     appointment = _appointment(patient, doctor, receptionist_user)
 
     res = auth_client(admin_user).delete(f"/api/patients/{patient.id}/")
@@ -93,12 +90,10 @@ def test_deleting_patient_cascades_to_records_logs_appointments_and_images(
     patient.refresh_from_db()
     record.refresh_from_db()
     image.refresh_from_db()
-    log.refresh_from_db()
     appointment.refresh_from_db()
     assert patient.active is False
     assert record.active is False
     assert image.active is False
-    assert log.active is False
     assert appointment.active is False
 
 
@@ -397,7 +392,6 @@ def _restore_url(name, object_id):
         "doctor_schedule": "/api/doctors/schedules/",
         "appointment": "/api/appointments/",
         "medical_record": "/api/medical-records/",
-        "consultation_log": "/api/consultation-logs/",
         "record_image": "/api/images/",
         "room": "/api/rooms/",
         "room_type": "/api/room-types/",
@@ -423,9 +417,6 @@ def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
     )
     appointment = _appointment(patient, doctor, receptionist_user)
     record = _record(patient, receptionist_user, center)
-    log = ConsultationLog.objects.create(
-        patient=patient, doctor=doctor_user, center=center
-    )
     image = RecordImage.objects.create(record=record, image="test.jpg", caption="x")
     rt = RoomType.objects.create(name="RT")
     room = Room.objects.create(code="R1", name="Room 1", room_type=rt, center=center)
@@ -442,7 +433,6 @@ def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
         "doctor_schedule": schedule,
         "appointment": appointment,
         "medical_record": record,
-        "consultation_log": log,
         "record_image": image,
         "room": room,
         "room_type": rt,
@@ -503,8 +493,6 @@ def test_restore_allowed_for_admin_on_every_resource(
             obj = Appointment
         elif name == "medical_record":
             obj = MedicalRecord
-        elif name == "consultation_log":
-            obj = ConsultationLog
         elif name == "record_image":
             obj = RecordImage
         elif name == "room":

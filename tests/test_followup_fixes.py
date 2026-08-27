@@ -11,7 +11,7 @@
 from apps.appointments.models import Appointment
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
-from apps.records.models import ConsultationLog, MedicalRecord
+from apps.records.models import MedicalRecord, RecordEntry
 
 MASK = "•"
 
@@ -36,16 +36,10 @@ def _make_doctor(user):
 
 
 def _make_record(patient, doctor_user, **overrides):
-    data = {
-        "title": "Follow-up",
-        "diagnosis": "Hypertension",
-        "notes": "Monitor weekly",
-    }
-    data.update(overrides)
     return MedicalRecord.objects.create(
         patient=patient,
         created_by=doctor_user,
-        **data,
+        **overrides,
     )
 
 
@@ -73,16 +67,17 @@ def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor
     assert res.status_code == 403
 
 
-def test_it_and_cm_cannot_read_consultation_logs(auth_client, make_user, doctor_user):
+def test_it_and_cm_cannot_read_record_entries(auth_client, make_user, doctor_user):
     patient = _make_patient()
-    log = ConsultationLog.objects.create(
-        patient=patient,
-        doctor=doctor_user,
-        subjective="Headaches",
-        plan="MRI",
+    record = _make_record(patient, doctor_user)
+    entry = RecordEntry.objects.create(
+        record=record,
+        author=doctor_user,
+        status=RecordEntry.Status.COMPLETED,
+        observaciones="Headaches, plan: MRI",
     )
     for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get(f"/api/consultation-logs/{log.id}/")
+        res = auth_client(user).get(f"/api/record-entries/{entry.id}/")
         assert res.status_code == 403
 
 

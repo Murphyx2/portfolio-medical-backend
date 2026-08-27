@@ -16,7 +16,7 @@ from django.db import connection
 from apps.core.encryption import blind_index_digits, get_cipher
 from apps.core.fields import EncryptedCharField, EncryptedTextField
 from apps.patients.models import Patient, PatientGuardian, PatientPhoneNumber
-from apps.records.models import ConsultationLog, MedicalRecord
+from apps.records.models import RecordEntry
 from cryptography.fernet import Fernet, InvalidToken
 
 
@@ -40,7 +40,7 @@ class Command(BaseCommand):
 
         total = 0
         with connection.cursor() as cursor:
-            for model in (Patient, PatientGuardian, PatientPhoneNumber, MedicalRecord, ConsultationLog):
+            for model in (Patient, PatientGuardian, PatientPhoneNumber, RecordEntry):
                 fields = _encrypted_field_names(model)
                 table = model._meta.db_table
                 cols = ", ".join(["id", *fields])

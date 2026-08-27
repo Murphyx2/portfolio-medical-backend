@@ -13,9 +13,9 @@ adding more sections to this same command.
 
 Deletes every Patient row (a real DB delete, not the soft-delete the API
 uses -- see apps/core/mixins.py) which cascades away every MedicalRecord,
-ConsultationLog, RecordImage, and Appointment tied to those patients too,
-then creates fresh patients (unique cedula always, unique NSS when present)
-and medical records against them.
+RecordEntry, RecordImage, and Appointment tied to those patients too, then
+creates fresh patients (unique cedula always, unique NSS when present) and
+expedientes (MedicalRecord anchor + one completed RecordEntry) against them.
 """
 
 import random
@@ -27,7 +27,7 @@ from django.db import transaction
 
 from apps.ars.models import ARS
 from apps.patients.models import Patient, PatientGuardian
-from apps.records.models import MedicalRecord
+from apps.records.models import MedicalRecord, RecordEntry
 
 FIRST_NAMES = [
     "Jose", "Luis", "Carlos", "Juan", "Miguel", "Rafael", "Pedro", "Manuel",
@@ -78,7 +78,7 @@ class Command(BaseCommand):
         if not options["confirm"]:
             raise CommandError(
                 "Refusing to run without --confirm (this deletes all Patient/"
-                "MedicalRecord/ConsultationLog/RecordImage/Appointment data)."
+                "MedicalRecord/RecordEntry/RecordImage/Appointment data)."
             )
         n_patients = options["patients"]
         n_records = options["records"]
@@ -180,16 +180,17 @@ class Command(BaseCommand):
     ) -> list[MedicalRecord]:
         records = []
         for patient in patients:
-            records.append(
-                MedicalRecord.objects.create(
-                    patient=patient,
-                    created_by=created_by,
-                    title=rng.choice(RECORD_TITLES),
-                    diagnosis="Sin hallazgos significativos.",
-                    treatment="Reposo y seguimiento en consulta de control.",
-                    notes="Registro generado por seed_demo_data.",
-                )
+            record = MedicalRecord.objects.create(patient=patient, created_by=created_by)
+            RecordEntry.objects.create(
+                record=record,
+                author=created_by,
+                status=RecordEntry.Status.COMPLETED,
+                dx="Sin hallazgos significativos.",
+                tx="Reposo y seguimiento en consulta de control.",
+                observaciones=f"{rng.choice(RECORD_TITLES)} -- generado por seed_demo_data.",
+                completed_at=record.created_at,
             )
+            records.append(record)
         return records
 
     @staticmethod
