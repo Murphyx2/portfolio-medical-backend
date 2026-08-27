@@ -109,3 +109,40 @@ class RecordImage(TimestampedModel, SoftDeleteModel):
 
     def __str__(self) -> str:
         return self.caption or self.image.name
+
+
+class APCategory(TimestampedModel, SoftDeleteModel):
+    """A category in the AP (Antecedentes Patológicos / pathological
+    history) catalog -- mirrors apps.services.ServiceType's category role."""
+
+    name = models.CharField(max_length=255, unique=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class APType(TimestampedModel, SoftDeleteModel):
+    """A selectable item in the AP catalog under a category -- mirrors
+    apps.services.Service's item role. PROTECT on category so a category
+    with items on file can't be hard-deleted out from under them."""
+
+    category = models.ForeignKey(APCategory, on_delete=models.PROTECT, related_name="types")
+    name = models.CharField(max_length=255)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["category", "name"],
+                condition=models.Q(active=True),
+                name="uniq_active_aptype_category_name",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.category.name})"

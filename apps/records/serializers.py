@@ -7,7 +7,7 @@ from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import sign_media_token
 from apps.patients.serializers import PatientSummarySerializer
-from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import APCategory, APType, ConsultationLog, MedicalRecord, RecordImage
 
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
 
@@ -18,6 +18,20 @@ class PatientLiteSerializer(PatientSummarySerializer):
     # full_name, cedula, nss.
     class Meta(PatientSummarySerializer.Meta):
         fields = ["id", "full_name", "gender", "cedula", "nss"]
+
+
+class APCategorySerializer(CoreModelSerializer):
+    class Meta:
+        model = APCategory
+        fields = ["id", "name", "sort_order", "active"]
+
+
+class APTypeSerializer(CoreModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+
+    class Meta:
+        model = APType
+        fields = ["id", "category", "category_name", "name", "sort_order", "active"]
 
 
 class RecordImageSerializer(CoreModelSerializer):

@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.core.admin import AuditModelAdmin
-from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import APCategory, APType, ConsultationLog, MedicalRecord, RecordImage
 
 
 class RecordImageInline(admin.TabularInline):
@@ -28,3 +28,17 @@ class ConsultationLogAdmin(AuditModelAdmin):
 class RecordImageAdmin(AuditModelAdmin):
     list_display = ("record", "caption", "uploaded_by", "active")
     list_filter = ("active",)
+
+
+@admin.register(APCategory)
+class APCategoryAdmin(AuditModelAdmin):
+    list_display = ("name", "sort_order", "active")
+    list_filter = ("active",)
+    search_fields = ("name",)
+
+
+@admin.register(APType)
+class APTypeAdmin(AuditModelAdmin):
+    list_display = ("name", "category", "sort_order", "active")
+    list_filter = ("active", "category")
+    search_fields = ("name",)

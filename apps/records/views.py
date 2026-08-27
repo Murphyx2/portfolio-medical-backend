@@ -14,11 +14,15 @@ from rest_framework.views import APIView
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanManageRecords,
+    IsAdmin,
     IsAdminDoctorOrNurse,
 )
+from apps.core.viewsets import ReferenceDataViewSet
 from apps.records.filters import RecordSearchFilter
-from apps.records.models import ConsultationLog, MedicalRecord, RecordImage
+from apps.records.models import APCategory, APType, ConsultationLog, MedicalRecord, RecordImage
 from apps.records.serializers import (
+    APCategorySerializer,
+    APTypeSerializer,
     ConsultationLogSerializer,
     MedicalRecordSerializer,
     RecordImageSerializer,
@@ -65,6 +69,25 @@ class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
     @transaction.atomic
     def perform_create(self, serializer):
         self.perform_create_with_owner(serializer, "uploaded_by")
+
+
+class APCategoryViewSet(ReferenceDataViewSet):
+    queryset = APCategory.all_objects.all()
+    serializer_class = APCategorySerializer
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [IsAdmin]
+    search_fields = ["name"]
+    ordering_fields = ["name", "sort_order"]
+
+
+class APTypeViewSet(ReferenceDataViewSet):
+    queryset = APType.all_objects.select_related("category").all()
+    serializer_class = APTypeSerializer
+    permission_classes = [IsAdminDoctorOrNurse]
+    write_permission_classes = [IsAdmin]
+    filterset_fields = ["category"]
+    search_fields = ["name"]
+    ordering_fields = ["name", "sort_order"]
 
 
 @api_view(["GET"])
