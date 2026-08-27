@@ -54,7 +54,10 @@ class MedicalRecord(TimestampedModel, SoftDeleteModel):
     last_glucose_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-last_visit_at", "-created_at"]
+        # F(...).desc(nulls_last=True): Postgres defaults DESC to NULLS
+        # FIRST, which would rank never-visited patients above recently
+        # visited ones -- the opposite of "most recent visit first".
+        ordering = [models.F("last_visit_at").desc(nulls_last=True), "-created_at"]
         constraints = [
             models.UniqueConstraint(
                 fields=["patient"],

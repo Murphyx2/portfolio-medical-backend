@@ -20,7 +20,7 @@ from apps.core.permissions import (
     IsAdminDoctorOrNurse,
 )
 from apps.core.viewsets import ReferenceDataViewSet
-from apps.records.filters import RecordSearchFilter
+from apps.records.filters import NullsLastOrderingFilter, RecordSearchFilter
 from apps.records.models import (
     APCategory,
     APType,
@@ -56,7 +56,7 @@ class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewS
     # Spec §3: soft-deleting an expediente is Admin-only, narrower than the
     # Admin/Doctor/Nurse write gate that covers create/edit.
     delete_permission_classes = [IsAdmin]
-    filter_backends = [DjangoFilterBackend, RecordSearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, RecordSearchFilter, NullsLastOrderingFilter]
     filterset_fields = ["patient", "center"]
     ordering_fields = ["last_visit_at", "patient__search_name", "created_by__username"]
 
