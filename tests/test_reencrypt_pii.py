@@ -14,7 +14,7 @@ from django.test import override_settings
 import apps.core.encryption as encryption
 from apps.core.encryption import blind_index_digits
 from apps.core.services import patient_ids_matching_digits
-from apps.patients.models import Patient
+from apps.patients.models import Patient, PatientGuardian
 
 
 def test_reencrypt_pii_updates_hash_columns_on_key_rotation(db):
@@ -50,35 +50,36 @@ def test_reencrypt_pii_updates_hash_columns_on_key_rotation(db):
 
 def test_reencrypt_pii_updates_guardian_cedula_hash_on_key_rotation(db):
     """Regression test for a real pre-existing bug: reencrypt_pii used to
-    hard-code `if name in ("cedula", "nss")`, so guardian_cedula_hash was
-    never recomputed on key rotation and silently went stale. Now it reads
-    from Patient.PII_INDEX_FIELDS (the same mapping Patient.save() uses),
-    so guardian_cedula is covered too."""
+    hard-code `if model is Patient and name in Patient.PII_INDEX_FIELDS`, so
+    a PatientGuardian's own cedula_hash was never recomputed on key rotation
+    and would have silently gone stale. Now it reads PII_INDEX_FIELDS off
+    whichever model is being rotated (generalized, not Patient-only), so
+    PatientGuardian is covered too."""
     old_key = Fernet.generate_key().decode()
     new_key = Fernet.generate_key().decode()
 
     with override_settings(PII_FIELD_KEY=old_key):
         encryption._cipher = None
         patient = Patient.objects.create(
-            first_name="Kid",
-            last_name="One",
-            cedula="",
-            has_guardian=True,
-            guardian_cedula="00198765432",
-            guardian_first_name="Parent",
-            guardian_last_name="One",
+            first_name="Kid", last_name="One", cedula="", has_guardian=True,
         )
-        old_guardian_hash = patient.guardian_cedula_hash
+        guardian = PatientGuardian.objects.create(
+            patient=patient,
+            first_name="Parent",
+            last_name="One",
+            cedula="00198765432",
+        )
+        old_guardian_hash = guardian.cedula_hash
         assert old_guardian_hash == blind_index_digits("00198765432")
 
     with override_settings(PII_FIELD_KEY=new_key):
         encryption._cipher = None
         call_command("reencrypt_pii", old_key=old_key)
 
-        patient.refresh_from_db()
+        guardian.refresh_from_db()
         new_guardian_hash = blind_index_digits("00198765432")
 
-        assert patient.guardian_cedula_hash == new_guardian_hash
+        assert guardian.cedula_hash == new_guardian_hash
         assert new_guardian_hash != old_guardian_hash
 
         # Guardian-cedula search still finds the patient immediately after rotation.

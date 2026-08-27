@@ -81,7 +81,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     admitted_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     # Free-text clinical fields: masked in the serializer for non-clinical
-    # roles (same convention as MedicalRecord.diagnosis/ConsultationLog),
+    # roles (same convention as apps.records' RecordEntry dx/tx/observaciones),
     # not encrypted at rest -- matches the existing records app precedent.
     chief_complaint = models.TextField(blank=True)
     cancel_reason = models.CharField(max_length=255, blank=True)

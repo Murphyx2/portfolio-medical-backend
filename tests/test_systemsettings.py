@@ -276,9 +276,7 @@ def test_max_image_upload_size_is_configurable(auth_client, admin_user, doctor_u
         first_name="Jane", last_name="Doe", gender="FEMALE",
         phone="8095550100", address="123 Main St", email="jane@example.com",
     )
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Note", diagnosis="D"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     admin_client = auth_client(admin_user)
     admin_client.patch("/api/settings/", {"max_image_upload_mb": 1}, format="json")
