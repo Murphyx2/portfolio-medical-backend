@@ -17,9 +17,13 @@ class PatientLiteSerializer(PatientSummarySerializer):
     # full_name/phone. `phone` powers the Appointments table's "patient
     # phone" column -- the primary scalar phone, not extra_phones.
     phone = serializers.CharField(read_only=True)
+    # Drives the "Enviar recordatorio WhatsApp" button's enabled/disabled
+    # state on the appointment detail view (apps.communications) -- not PII
+    # content itself, just a consent flag, so it isn't in the masked subset.
+    whatsapp_opt_in = serializers.BooleanField(read_only=True)
 
     class Meta(PatientSummarySerializer.Meta):
-        fields = ["id", "full_name", "gender", "phone"]
+        fields = ["id", "full_name", "gender", "phone", "whatsapp_opt_in"]
 
 
 class DoctorLiteSerializer(_DoctorLiteBase):
