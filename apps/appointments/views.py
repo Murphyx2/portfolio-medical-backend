@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -149,6 +150,27 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         self.log_action(appointment, "UPDATE", details={"date_time": serializer.data["date_time"]})
         notify_appointment_event(appointment, Template.Kind.CITA_REAGENDADA, user=request.user)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def today_remaining_count(self, request):
+        """Badge count for the sidebar's Citas item: SCHEDULED/CONFIRMED
+        appointments still ahead today (now..end of day). Goes through
+        get_queryset() so it inherits the same auto-cancel maintenance and
+        center/doctor scoping the list endpoint already applies."""
+        now = timezone.now()
+        # .replace(hour=23, ...) must operate on local wall-clock time, not
+        # the UTC-stored instant -- USE_TZ=True means now() is UTC internally,
+        # and this server's TIME_ZONE (America/Santo_Domingo, UTC-4) makes a
+        # naive .replace() on it land on the wrong calendar day near midnight.
+        end_of_day = timezone.localtime(now).replace(
+            hour=23, minute=59, second=59, microsecond=999999
+        )
+        count = self.get_queryset().filter(
+            status__in=[Appointment.Status.SCHEDULED, Appointment.Status.CONFIRMED],
+            date_time__gte=now,
+            date_time__lte=end_of_day,
+        ).count()
+        return Response({"count": count})
 
     @action(detail=True, methods=["post"], permission_classes=[CanSendManualReminder])
     def send_whatsapp_reminder(self, request, pk=None):
