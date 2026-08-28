@@ -377,6 +377,29 @@ class CanManageEncounters(BasePermission):
         return True
 
 
+class CanSendStaffEmail(RoleUnionPermission):
+    """Comunicaciones (apps.communications): only Admin/Doctor may compose a
+    staff email (Nurse/Receptionist/IT cannot). Whether the message may use
+    kind=ALERTA/priority=ALERTA (Admin-only) is enforced in
+    MessageSerializer.validate(), not here -- that's a field-level rule this
+    method-wide permission class can't express."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
+
+
+class CanSendManualReminder(RoleUnionPermission):
+    """Comunicaciones: manual 'Enviar recordatorio WhatsApp' on an
+    appointment -- same role set as CanCancelAppointment."""
+
+    allowed_roles = (
+        User.Role.DOCTOR,
+        User.Role.NURSE,
+        User.Role.RECEPTIONIST,
+        User.Role.ADMIN,
+        User.Role.CENTER_MANAGER,
+    )
+
+
 class PatientDataPermission(BasePermission):
     """
     Patient data is sensitive: writes require Admin/Doctor/Receptionist/Nurse/

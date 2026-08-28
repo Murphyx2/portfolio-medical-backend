@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.conf import settings
 from django.db import models
 
 from apps.core.encryption import blind_index_digits
@@ -109,6 +110,19 @@ class Patient(TimestampedModel, SoftDeleteModel):
     # medical record history.
     allergies = EncryptedTextField(blank=True, default="")
     critical_conditions = EncryptedTextField(blank=True, default="")
+
+    # Comunicaciones (apps.communications) consent: WhatsApp appointment
+    # notifications are only ever sent when this is True (plus a usable
+    # phone) -- see apps.communications.services.recipients.
+    whatsapp_opt_in = models.BooleanField(default=False)
+    whatsapp_opt_in_at = models.DateTimeField(null=True, blank=True)
+    whatsapp_opt_in_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
 
     class Meta:
         ordering = ["search_name"]

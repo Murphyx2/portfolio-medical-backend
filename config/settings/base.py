@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "apps.rooms",
     "apps.encounters",
     "apps.systemsettings",
+    "apps.communications",
 ]
 
 MIDDLEWARE = [
@@ -262,3 +263,19 @@ SPECTACULAR_SETTINGS = {
 
 # Root urls for the API.
 API_URL_PREFIX = env("DJANGO_API_PREFIX", "api")
+
+# ------------------------------------------------------------------
+# Email (apps.communications) -- the clinic's own mailbox. Comunicaciones
+# reuses this backend exclusively; it never introduces a second one
+# (Ajustes -> Correo may only override from-name/reply-to, see
+# apps/communications/services/email.py).
+# ------------------------------------------------------------------
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = env("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(env("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", "true")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "no-reply@medicalconsultations.local")

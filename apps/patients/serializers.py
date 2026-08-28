@@ -4,6 +4,7 @@ import unicodedata
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.centers.models import MedicalCenter
@@ -176,11 +177,14 @@ class PatientSerializer(CoreModelSerializer):
             "guardians",
             "allergies",
             "critical_conditions",
+            "whatsapp_opt_in",
+            "whatsapp_opt_in_at",
+            "whatsapp_opt_in_by",
             "active",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "whatsapp_opt_in_at", "whatsapp_opt_in_by"]
 
     def create(self, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
@@ -201,6 +205,13 @@ class PatientSerializer(CoreModelSerializer):
     def update(self, instance, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
         guardians = validated_data.pop("guardians", None)
+        if (
+            "whatsapp_opt_in" in validated_data
+            and validated_data["whatsapp_opt_in"] != instance.whatsapp_opt_in
+        ):
+            validated_data["whatsapp_opt_in_at"] = timezone.now()
+            request = self.context.get("request")
+            validated_data["whatsapp_opt_in_by"] = getattr(request, "user", None) if request else None
         patient = super().update(instance, validated_data)
         if extra_phones is not None:
             patient.extra_phones.all().delete()
