@@ -14,7 +14,13 @@ load_dotenv(BASE_DIR / ".env")
 
 
 def env(key: str, default: str | None = None) -> str | None:
-    return os.getenv(key, default)
+    # A var that's *set but empty* (e.g. an unfilled optional .env line like
+    # `EMAIL_PORT=`) must fall back to `default` the same as an unset one --
+    # os.getenv's own default only kicks in when the key is absent entirely,
+    # which previously let `int(env("EMAIL_PORT", "587"))` crash on `int("")`
+    # for any optional numeric setting left blank in .env.
+    value = os.getenv(key)
+    return value if value else default
 
 
 def env_bool(key: str, default: str = "false") -> bool:
