@@ -41,6 +41,8 @@ _CACHE_INVALIDATION_MAP = {
     "servicetype": ("servicetype", "service"),
     "room": ("room",),
     "roomtype": ("roomtype",),
+    "apcategory": ("apcategory",),
+    "aptype": ("aptype",),
 }
 
 

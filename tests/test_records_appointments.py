@@ -3,7 +3,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
-from apps.records.models import ConsultationLog, MedicalRecord
+from apps.records.models import MedicalRecord, RecordEntry
 from apps.services.models import Service, ServiceType
 
 
@@ -27,25 +27,17 @@ def _make_doctor(user):
 
 
 def _make_service():
-    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    service_type = ServiceType.objects.get_or_create(name="CONSULTA")[0]
     return Service.objects.create(
         simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )
 
 
 def _make_record(patient, doctor_user, **overrides):
-    data = {
-        "title": "Follow-up",
-        "diagnosis": "Hypertension",
-        "treatment": "Lifestyle changes",
-        "medicine_and_doses": "Amlodipine 5mg daily",
-        "notes": "Monitor weekly",
-    }
-    data.update(overrides)
     return MedicalRecord.objects.create(
         patient=patient,
         created_by=doctor_user,
-        **data,
+        **overrides,
     )
 
 
@@ -53,12 +45,7 @@ def test_doctor_creates_record(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
     res = auth_client(doctor_user).post(
         "/api/medical-records/",
-        {
-            "patient": patient.id,
-            "title": "Initial consult",
-            "diagnosis": "Migraine",
-            "notes": "Started new meds",
-        },
+        {"patient": patient.id},
         format="json",
     )
     assert res.status_code == 201
@@ -69,7 +56,7 @@ def test_receptionist_cannot_create_record(auth_client, receptionist_user):
     patient = _make_patient(receptionist_user)
     res = auth_client(receptionist_user).post(
         "/api/medical-records/",
-        {"patient": patient.id, "title": "x", "diagnosis": "y"},
+        {"patient": patient.id},
         format="json",
     )
     assert res.status_code in (401, 403)
@@ -86,11 +73,14 @@ def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor
 
 def test_doctor_reads_full_clinical(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
-    _make_record(patient, doctor_user)
-    res = auth_client(doctor_user).get("/api/medical-records/")
+    record = _make_record(patient, doctor_user)
+    RecordEntry.objects.create(
+        record=record, author=doctor_user, status=RecordEntry.Status.COMPLETED, dx="Hypertension",
+    )
+    res = auth_client(doctor_user).get("/api/record-entries/")
     assert res.status_code == 200
     result = res.data["results"][0]
-    assert result["diagnosis"] == "Hypertension"
+    assert result["dx"] == "Hypertension"
 
 
 def test_it_cannot_read_records(auth_client, it_user, doctor_user, receptionist_user):
@@ -119,16 +109,17 @@ def test_record_patient_info_full_for_doctor(auth_client, doctor_user, reception
     assert patient_info["cedula"] == "00112345678"
 
 
-def test_consultation_log_creation(auth_client, doctor_user, receptionist_user):
+def test_record_entry_creation(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
+    record = _make_record(patient, doctor_user)
     res = auth_client(doctor_user).post(
-        "/api/consultation-logs/",
-        {"patient": patient.id, "subjective": "Headaches for 2 weeks", "plan": "MRI"},
+        "/api/record-entries/",
+        {"record": record.id, "dx": "Headaches for 2 weeks", "tx": "MRI"},
         format="json",
     )
     assert res.status_code == 201
-    log = ConsultationLog.objects.get()
-    assert log.doctor == doctor_user
+    entry = RecordEntry.objects.get()
+    assert entry.author == doctor_user
 
 
 def test_medicine_crud_for_admin(auth_client, admin_user):
@@ -168,7 +159,7 @@ def test_appointment_created_by_receptionist(
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -189,7 +180,7 @@ def test_nurse_can_create_appointment(auth_client, nurse_user, receptionist_user
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -207,7 +198,7 @@ def test_appointment_patient_info_masked_for_it_role(
     Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(it_user).get("/api/appointments/")
@@ -239,7 +230,7 @@ def test_doctor_sees_colleagues_appointment_at_shared_center(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(doctor_user).get("/api/appointments/")
@@ -269,12 +260,15 @@ def test_doctor_cannot_write_colleagues_appointment_at_shared_center(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     client = auth_client(doctor_user)
 
     res = client.patch(f"/api/appointments/{appt.id}/", {"duration_minutes": 45}, format="json")
+    assert res.status_code == 403
+
+    res = client.post(f"/api/appointments/{appt.id}/confirm/")
     assert res.status_code == 403
 
     res = client.post(f"/api/appointments/{appt.id}/complete/")
@@ -306,13 +300,18 @@ def test_doctor_can_write_own_appointment_at_shared_center(
         patient=patient,
         doctor=own_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     client = auth_client(doctor_user)
 
     res = client.patch(f"/api/appointments/{appt.id}/", {"duration_minutes": 45}, format="json")
     assert res.status_code == 200
+
+    res = client.post(f"/api/appointments/{appt.id}/confirm/")
+    assert res.status_code == 200
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.CONFIRMED
 
     res = client.post(f"/api/appointments/{appt.id}/complete/")
     assert res.status_code == 200
@@ -338,7 +337,7 @@ def test_doctor_without_binding_does_not_see_other_centers_appointment(
         patient=patient,
         doctor=other_doctor,
         center=center,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(doctor_user).get("/api/appointments/")
@@ -355,7 +354,7 @@ def test_cancel_appointment_forbidden_for_it(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(it_user).post(f"/api/appointments/{appt.id}/cancel/", {"reason": "Patient request"}, format="json")
@@ -375,7 +374,7 @@ def test_cancel_appointment_requires_non_empty_reason(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/cancel/", {}, format="json")
@@ -388,12 +387,112 @@ def test_cancel_appointment_requires_non_empty_reason(
     assert appt.status == Appointment.Status.SCHEDULED
 
 
+def test_confirm_appointment_moves_scheduled_to_confirmed(
+    auth_client, receptionist_user, doctor_user
+):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2099-01-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/confirm/")
+    assert res.status_code == 200, res.data
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.CONFIRMED
+
+
+def test_confirm_appointment_forbidden_for_it(auth_client, receptionist_user, doctor_user, it_user):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2099-01-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(it_user).post(f"/api/appointments/{appt.id}/confirm/")
+    assert res.status_code in (401, 403)
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.SCHEDULED
+
+
+def test_confirm_appointment_rejected_when_not_scheduled(auth_client, receptionist_user, doctor_user):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    client = auth_client(receptionist_user)
+    for status in (
+        Appointment.Status.CONFIRMED,
+        Appointment.Status.COMPLETED,
+        Appointment.Status.CANCELLED,
+    ):
+        appt = Appointment.objects.create(
+            patient=patient,
+            doctor=doctor,
+            date_time="2099-01-10T09:00:00Z",
+            status=status,
+            created_by=receptionist_user,
+        )
+        res = client.post(f"/api/appointments/{appt.id}/confirm/")
+        assert res.status_code == 400, res.data
+        appt.refresh_from_db()
+        assert appt.status == status
+
+
+def test_complete_appointment_rejected_when_not_confirmed(auth_client, receptionist_user, doctor_user):
+    """`complete` now requires the two-step Scheduled -> Confirmed ->
+    Completed flow -- a direct Scheduled -> Completed call is no longer
+    allowed (was previously permissive to any non-terminal status)."""
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2099-01-10T09:00:00Z",
+        created_by=receptionist_user,
+    )
+    res = auth_client(receptionist_user).post(f"/api/appointments/{appt.id}/complete/")
+    assert res.status_code == 400, res.data
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.SCHEDULED
+
+
+def test_reschedule_and_cancel_still_allowed_while_confirmed(
+    auth_client, receptionist_user, doctor_user
+):
+    patient = _make_patient(receptionist_user)
+    doctor = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=doctor,
+        date_time="2099-01-10T09:00:00Z",
+        status=Appointment.Status.CONFIRMED,
+        created_by=receptionist_user,
+    )
+    client = auth_client(receptionist_user)
+    res = client.post(
+        f"/api/appointments/{appt.id}/reschedule/",
+        {"date_time": "2099-01-11T10:30:00Z"},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.CONFIRMED
+
+    res = client.post(f"/api/appointments/{appt.id}/cancel/", {"reason": "Patient request"}, format="json")
+    assert res.status_code == 200, res.data
+    appt.refresh_from_db()
+    assert appt.status == Appointment.Status.CANCELLED
+
+
 def test_create_appointment_requires_service(auth_client, receptionist_user, doctor_user):
     patient = _make_patient(receptionist_user)
     doctor = _make_doctor(doctor_user)
     res = auth_client(receptionist_user).post(
         "/api/appointments/",
-        {"patient": patient.id, "doctor": doctor.id, "date_time": "2026-08-10T09:00:00Z"},
+        {"patient": patient.id, "doctor": doctor.id, "date_time": "2099-01-10T09:00:00Z"},
         format="json",
     )
     assert res.status_code == 400, res.data
@@ -415,7 +514,7 @@ def test_create_appointment_defaults_center_to_org_default(
             "patient": patient.id,
             "doctor": doctor.id,
             "service": service.id,
-            "date_time": "2026-08-10T09:00:00Z",
+            "date_time": "2099-01-10T09:00:00Z",
         },
         format="json",
     )
@@ -431,18 +530,18 @@ def test_reschedule_appointment_updates_date_time_only(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         duration_minutes=45,
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(
         f"/api/appointments/{appt.id}/reschedule/",
-        {"date_time": "2026-08-11T10:30:00Z"},
+        {"date_time": "2099-01-11T10:30:00Z"},
         format="json",
     )
     assert res.status_code == 200, res.data
     appt.refresh_from_db()
-    assert appt.date_time.isoformat() == "2026-08-11T10:30:00+00:00"
+    assert appt.date_time.isoformat() == "2099-01-11T10:30:00+00:00"
     assert appt.duration_minutes == 45
 
 
@@ -454,13 +553,13 @@ def test_reschedule_forbidden_for_closed_appointment(
     appt = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
-        date_time="2026-08-10T09:00:00Z",
+        date_time="2099-01-10T09:00:00Z",
         status=Appointment.Status.CANCELLED,
         created_by=receptionist_user,
     )
     res = auth_client(receptionist_user).post(
         f"/api/appointments/{appt.id}/reschedule/",
-        {"date_time": "2026-08-11T10:30:00Z"},
+        {"date_time": "2099-01-11T10:30:00Z"},
         format="json",
     )
     assert res.status_code == 400, res.data

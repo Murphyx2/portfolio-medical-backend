@@ -6,8 +6,9 @@ from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 
+from apps.appointments.services import complete_todays_appointments_for_patient
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
-from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
+from apps.core.permissions import CanManageEncounters, IsAdminOrITOrCenterManager, IsStaffUser
 from apps.core.services import scope_queryset
 from apps.encounters.filters import EncounterSearchFilter
 from apps.encounters.models import Encounter, EncounterAdmitError
@@ -19,11 +20,13 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         "patient", "patient__ars", "patient__ars_program",
         "doctor__user", "room", "center", "service_type", "ars", "ars_program",
         "created_by",
-    ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
+    ).prefetch_related(
+        "diagnoses", "services__service", "services__doctor__user", "patient__guardians"
+    )
     serializer_class = EncounterSerializer
     permission_classes = [IsStaffUser]
     write_permission_classes = [CanManageEncounters]
-    delete_permission_classes = [IsAdminOrIT]
+    delete_permission_classes = [IsAdminOrITOrCenterManager]
     filter_backends = [DjangoFilterBackend, EncounterSearchFilter, OrderingFilter]
     filterset_fields = {
         "patient": ["exact"],
@@ -64,6 +67,9 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
             encounter,
             "UPDATE",
             details={"status": "ACTIVE", "encounter_number": encounter.encounter_number},
+        )
+        complete_todays_appointments_for_patient(
+            encounter.patient, timezone.localtime(encounter.admitted_at).date(), request.user, request=request
         )
         return Response(self.get_serializer(encounter).data)
 

@@ -61,10 +61,11 @@ def test_receptionist_sees_full_pii(auth_client, receptionist_user):
     _full(patient.id, auth_client, receptionist_user)
 
 
-def test_center_manager_sees_masked_pii(auth_client, receptionist_user, make_user):
+def test_center_manager_sees_full_pii(auth_client, receptionist_user, make_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit).
     cm_user = make_user("cm", "CENTER_MANAGER")
     patient = _make_patient()
-    _masked(patient.id, auth_client, cm_user)
+    _full(patient.id, auth_client, cm_user)
 
 
 def test_doctor_sees_full_pii(auth_client, doctor_user):

@@ -49,6 +49,7 @@ class AuditLog(TimestampedModel):
         LOGOUT = "LOGOUT", "Logout"
         FAILED_LOGIN = "FAILED_LOGIN", "Failed login"
         EXPORT = "EXPORT", "Export"
+        SETTINGS_RESET = "SETTINGS_RESET", "Settings reset"
 
     user = models.ForeignKey(
         "accounts.User",

@@ -68,3 +68,6 @@ class Appointment(TimestampedModel, SoftDeleteModel):
 
     def __str__(self) -> str:
         return f"{self.patient.full_name} @ {self.date_time:%Y-%m-%d %H:%M}"
+
+    def is_locked_for_edit(self) -> bool:
+        return self.status in (self.Status.COMPLETED, self.Status.CANCELLED)

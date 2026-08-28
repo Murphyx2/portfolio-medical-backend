@@ -10,20 +10,21 @@ from apps.centers.serializers import (
     MedicalCenterSerializer,
 )
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdmin, IsStaffUser
+from apps.core.permissions import IsAdminOrCenterManager, IsStaffUser
 from apps.core.viewsets import ReferenceDataViewSet
 
 
 class MedicalCenterViewSet(ReferenceDataViewSet):
-    """Centers are visible to nobody but ADMIN -- every other role, including
-    IT (which could previously write here), is fully excluded, per the
-    decision to hide the Centers page from all non-admin roles."""
+    """Centers are visible to nobody but ADMIN/CENTER_MANAGER (admin-
+    equivalent) -- every other role, including IT (which could previously
+    write here), is fully excluded, per the decision to hide the Centers
+    page from all non-admin roles."""
 
     queryset = MedicalCenter.all_objects.annotate(
         doctor_count=Count("doctor_bindings")
     ).order_by("name")
     serializer_class = MedicalCenterSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrCenterManager]
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
@@ -43,7 +44,7 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdmin]
+            self.permission_classes = [IsAdminOrCenterManager]
         return super().get_permissions()
 
     def perform_create(self, serializer):
@@ -52,8 +53,13 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         binding = self.get_object()
-        if not getattr(request.user, "is_admin", False):
-            self.permission_denied(request, message="Only admins can approve bindings.")
+        if not (
+            getattr(request.user, "is_admin", False)
+            or getattr(request.user, "is_center_manager", False)
+        ):
+            self.permission_denied(
+                request, message="Only admins or center managers can approve bindings."
+            )
         binding.approved = True
         binding.approved_by = request.user
         binding.save()

@@ -163,7 +163,7 @@ def test_doctor_image_for_foreign_record_allowed(auth_client, make_user):
     patient = _make_patient(center=center)
     foreign_patient = _make_patient(first_name="F", last_name="F", center=other)
     foreign_record = MedicalRecord.objects.create(
-        patient=foreign_patient, created_by=other_doc, title="x", diagnosis="y", center=other
+        patient=foreign_patient, created_by=other_doc, center=other
     )
 
     buf = BytesIO()
@@ -189,13 +189,11 @@ def test_record_image_list_is_unscoped_for_doctor(auth_client, make_user):
     _make_binding(_make_profile(doc), center)
 
     own_record = MedicalRecord.objects.create(
-        patient=_make_patient(center=center), created_by=doc, title="own", diagnosis="x", center=center
+        patient=_make_patient(center=center), created_by=doc, center=center
     )
     other_record = MedicalRecord.objects.create(
         patient=_make_patient(first_name="O", last_name="T", center=other),
         created_by=other_doc,
-        title="other",
-        diagnosis="x",
         center=other,
     )
     own_img = RecordImage.objects.create(record=own_record, image="records/1/a.png")
@@ -217,9 +215,7 @@ def test_media_requires_signed_token(auth_client, make_user, monkeypatch, tmp_pa
     center = _make_center("C1")
     _make_binding(_make_profile(doc), center)
     patient = _make_patient(center=center)
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doc, title="t", diagnosis="d", center=center
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doc, center=center)
     img_dir = tmp_path / "records" / str(patient.id)
     img_dir.mkdir(parents=True, exist_ok=True)
     (img_dir / "abc.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 100)
@@ -310,23 +306,35 @@ def test_weak_password_rejected_on_create(auth_client, admin_user):
 
 
 # ---------------------------------------------------------------------------
-# M-05: names / birth date masked for IT and CENTER_MANAGER
+# M-05: names / birth date masked for IT; CENTER_MANAGER is admin-equivalent
+# app-wide (except Settings edit) and sees full PII.
 # ---------------------------------------------------------------------------
 
-def test_it_and_cm_see_masked_names(auth_client, make_user):
+def test_it_sees_masked_names(auth_client, make_user):
     it = make_user("it", "IT")
+    patient = _make_patient(birth_date="1990-05-12")
+
+    res = auth_client(it).get(f"/api/patients/{patient.id}/")
+    assert res.status_code == 200
+    assert res.data["first_name"] != "Jane"
+    assert "•" in res.data["first_name"]
+    assert res.data["last_name"] != "Doe"
+    assert res.data["full_name"] != "Jane Doe"
+    assert res.data["birth_date"] != "1990-05-12"
+    assert res.data["age"] is None
+
+
+def test_center_manager_sees_full_names(auth_client, make_user):
     cm = make_user("cm", "CENTER_MANAGER")
     patient = _make_patient(birth_date="1990-05-12")
 
-    for user in (it, cm):
-        res = auth_client(user).get(f"/api/patients/{patient.id}/")
-        assert res.status_code == 200
-        assert res.data["first_name"] != "Jane"
-        assert "•" in res.data["first_name"]
-        assert res.data["last_name"] != "Doe"
-        assert res.data["full_name"] != "Jane Doe"
-        assert res.data["birth_date"] != "1990-05-12"
-        assert res.data["age"] is None
+    res = auth_client(cm).get(f"/api/patients/{patient.id}/")
+    assert res.status_code == 200
+    assert res.data["first_name"] == "Jane"
+    assert res.data["last_name"] == "Doe"
+    assert res.data["full_name"] == "Jane Doe"
+    assert res.data["birth_date"] == "1990-05-12"
+    assert res.data["age"] is not None
 
 
 def test_doctor_sees_full_names(auth_client, doctor_user):

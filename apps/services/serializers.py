@@ -17,7 +17,16 @@ class ServiceLiteSerializer(serializers.ModelSerializer):
 class ServiceTypeSerializer(CoreModelSerializer):
     class Meta:
         model = ServiceType
-        fields = ["id", "name", "requires_doctor", "requires_diagnosis", "active"]
+        fields = ["id", "name", "requires_doctor", "active"]
+
+    def to_internal_value(self, data):
+        # Normalize name to uppercase before DRF's UniqueValidator runs (it
+        # runs before validate_name, so uppercasing there would be too late
+        # to catch a same-name-different-case duplicate) -- the model's own
+        # save() override is a defense-in-depth backstop for direct ORM use.
+        if hasattr(data, "get") and isinstance(data.get("name"), str):
+            data = {**data, "name": data["name"].upper()}
+        return super().to_internal_value(data)
 
 
 class ServiceSerializer(CoreModelSerializer):

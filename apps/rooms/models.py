@@ -9,6 +9,10 @@ class RoomType(TimestampedModel, SoftDeleteModel):
     class Meta:
         ordering = ["name"]
 
+    def save(self, *args, **kwargs):
+        self.name = self.name.upper()
+        super().save(*args, **kwargs)
+
     def __str__(self) -> str:
         return self.name
 
@@ -27,6 +31,7 @@ class Room(TimestampedModel, SoftDeleteModel):
 
     def save(self, *args, **kwargs):
         self.code = self.code.upper()
+        self.name = self.name.upper()
         self.floor_area = self.floor_area.upper()
         super().save(*args, **kwargs)
 

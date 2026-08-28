@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
+from apps.appointments.services import cancel_noshow_appointments
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanCancelAppointment,
@@ -49,7 +50,13 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
     ]
 
     def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor__user")
+        user = getattr(self.request, "user", None)
+        if getattr(user, "is_authenticated", False):
+            # Lazy no-show maintenance: no celery/cron in this repo, so any
+            # SCHEDULED appointment that's gone stale is auto-cancelled the
+            # next time anyone reads the appointments endpoint.
+            cancel_noshow_appointments(user, request=self.request)
+        return scope_queryset(super().get_queryset(), user, owner_field="doctor__user")
 
     def get_permissions(self):
         permissions = super().get_permissions()
@@ -60,7 +67,7 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         # self.permission_denied() checks this used to hand-roll.
         if self.action == "cancel":
             return [CanCancelAppointment()]
-        if self.action == "complete":
+        if self.action in ("confirm", "complete"):
             return [CanCompleteAppointment()]
         return permissions
 
@@ -87,11 +94,26 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
+    def confirm(self, request, pk=None):
+        """The patient has confirmed attendance -- an intermediate step
+        between SCHEDULED and COMPLETED (see `complete`, which now only
+        accepts a CONFIRMED appointment)."""
+        appointment = self.get_object()
+        if appointment.status != Appointment.Status.SCHEDULED:
+            raise serializers.ValidationError(
+                {"detail": "Only scheduled appointments can be confirmed."}
+            )
+        appointment.status = Appointment.Status.CONFIRMED
+        appointment.save()
+        self.log_action(appointment, "UPDATE", details={"status": "CONFIRMED"})
+        return Response(self.get_serializer(appointment).data)
+
+    @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         appointment = self.get_object()
-        if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.COMPLETED):
+        if appointment.status != Appointment.Status.CONFIRMED:
             raise serializers.ValidationError(
-                {"detail": "This appointment is already closed."}
+                {"detail": "Only confirmed appointments can be completed."}
             )
         appointment.status = Appointment.Status.COMPLETED
         appointment.save()

@@ -315,17 +315,23 @@ def test_admin_doctor_nurse_see_full_pii(request, auth_client, role_fixture):
         assert res.data[field] == value, f"{field} should be full for {role_fixture}"
 
 
-@pytest.mark.parametrize("role_fixture", ["it_user", "cm_user"])
-def test_it_and_cm_see_redacted_pii(request, auth_client, make_user, role_fixture):
-    if role_fixture == "cm_user":
-        user = make_user("cm", "CENTER_MANAGER")
-    else:
-        user = request.getfixturevalue(role_fixture)
+def test_center_manager_sees_full_pii(auth_client, make_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it sees unmasked PII, unlike IT.
+    user = make_user("cm", "CENTER_MANAGER")
     patient = _patient_with_pii()
     res = auth_client(user).get(f"/api/patients/{patient.id}/")
     assert res.status_code == 200
+    for field, value in FULL_PII.items():
+        assert res.data[field] == value, f"{field} should be full for center_manager"
+
+
+def test_it_sees_redacted_pii(auth_client, it_user):
+    patient = _patient_with_pii()
+    res = auth_client(it_user).get(f"/api/patients/{patient.id}/")
+    assert res.status_code == 200
     for field in ("phone", "address", "email", "cedula", "nss"):
-        assert "•" in res.data[field], f"{field} should be redacted for {role_fixture}"
+        assert "•" in res.data[field], f"{field} should be redacted for it"
         assert res.data[field] != FULL_PII[field]
 
 

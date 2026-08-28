@@ -1,6 +1,8 @@
 import re
 import unicodedata
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 DR_PHONE_LENGTH = 10
@@ -27,3 +29,32 @@ def validate_phone(value: str) -> str:
     if len(digits) != DR_PHONE_LENGTH:
         raise serializers.ValidationError("Phone must contain exactly 10 digits.")
     return digits
+
+
+class SettingsMinimumLengthValidator:
+    """Drop-in replacement for Django's own MinimumLengthValidator in
+    AUTH_PASSWORD_VALIDATORS, except the minimum reads from the runtime-
+    configurable SystemSettings singleton (apps.systemsettings.services.
+    get_settings) instead of a fixed constructor argument."""
+
+    def validate(self, password, user=None):
+        from apps.systemsettings.services import get_settings
+
+        min_length = get_settings().password_min_length
+        if len(password) < min_length:
+            raise DjangoValidationError(
+                _(
+                    "This password is too short. It must contain at least "
+                    "%(min_length)d characters."
+                ),
+                code="password_too_short",
+                params={"min_length": min_length},
+            )
+
+    def get_help_text(self):
+        from apps.systemsettings.services import get_settings
+
+        min_length = get_settings().password_min_length
+        return _(
+            "Your password must contain at least %(min_length)d characters."
+        ) % {"min_length": min_length}

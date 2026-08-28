@@ -6,7 +6,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
 from apps.core.models import AuditLog
 from apps.doctors.models import DoctorProfile
-from apps.patients.models import Patient
+from apps.patients.models import Patient, PatientGuardian
 from apps.records.models import MedicalRecord
 
 
@@ -128,11 +128,9 @@ def test_it_sees_redacted_pii(auth_client, it_user, receptionist_user):
     assert "555" not in result["phone"]
 
 
-def test_nurse_cannot_modify_patients(auth_client, nurse_user, receptionist_user):
-    auth_client(receptionist_user).post("/api/patients/", _patient_payload(), format="json")
-    client = auth_client(nurse_user)
-    res = client.post("/api/patients/", _patient_payload(), format="json")
-    assert res.status_code in (401, 403)
+def test_nurse_can_create_patients(auth_client, nurse_user):
+    res = auth_client(nurse_user).post("/api/patients/", _patient_payload(), format="json")
+    assert res.status_code == 201, res.data
 
 
 def test_update_patient_keeps_encryption(auth_client, receptionist_user):
@@ -245,6 +243,14 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
             )
 
     client = auth_client(admin_user)
+    # Prime the SystemSettings cache (apps/systemsettings/services.py) outside
+    # the measured block -- SettingsAnonRateThrottle/SettingsUserRateThrottle
+    # (apps/core/throttling.py) read it on every request, and the first read
+    # after the autouse clear_cache fixture is a cache miss (one extra DB
+    # query) that would otherwise skew this row-count-independent comparison.
+    from apps.systemsettings.services import get_settings
+
+    get_settings()
     _make(1)
     n1, _ = _query_count(client, "/api/patients/?page_size=20")
     _make(4)  # 5 patients total
@@ -252,11 +258,15 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
     assert n1 == n5
 
 
-def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
+def test_doctor_patient_list_no_duplicate_rows_across_multiple_guardians(
     auth_client, doctor_user, db
 ):
-    # PatientViewSet doesn't join medical_records at all, so multiple
-    # MedicalRecords for the same patient can't produce duplicate rows here.
+    # PatientViewSet's queryset prefetches (doesn't join) guardians/
+    # extra_phones, so a patient with several guardians on file can't
+    # produce duplicate rows here. (MedicalRecord is no longer a many-per-
+    # patient relation as of the Expedientes Médicos refactor -- it's now
+    # unique per active patient -- so guardians is the multiplicity this
+    # regression guard actually needs today.)
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
@@ -268,9 +278,7 @@ def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
     )
     patient = Patient.objects.create(first_name="Ana", last_name="Perez", center=center)
     for i in range(3):
-        MedicalRecord.objects.create(
-            patient=patient, created_by=doctor_user, center=center, title=f"Visit {i}"
-        )
+        PatientGuardian.objects.create(patient=patient, first_name=f"G{i}", last_name="X")
 
     res = auth_client(doctor_user).get("/api/patients/?page_size=20")
     assert res.status_code == 200
@@ -304,15 +312,16 @@ def test_allergies_masked_for_it_role(auth_client, receptionist_user, it_user):
 
 
 def test_creating_patient_auto_creates_placeholder_record(auth_client, receptionist_user):
+    # The placeholder MedicalRecord is now the one living expediente anchor
+    # (no title/diagnosis/notes fields of its own -- those moved to
+    # RecordEntry); allergies/critical_conditions render straight from
+    # Patient in the chart's snapshot header instead of being copied here.
     res = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(allergies="Penicillin"), format="json"
     )
     assert res.status_code == 201, res.data
     record = MedicalRecord.objects.get(patient_id=res.data["id"])
     assert record.created_by == receptionist_user
-    assert record.title == "Registro inicial"
-    assert "Penicillin" in record.notes
-    assert record.diagnosis == ""
 
 
 def test_creating_patient_audits_placeholder_record_creation(auth_client, receptionist_user):

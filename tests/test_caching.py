@@ -119,7 +119,7 @@ def test_room_type_list_cached_and_invalidated(auth_client, admin_user, db):
 
     client.patch(f"/api/room-types/{rt.id}/", {"name": "Emergencia"}, format="json")
     renamed = client.get("/api/room-types/").data["results"]
-    assert any(r["name"] == "Emergencia" for r in renamed)
+    assert any(r["name"] == "EMERGENCIA" for r in renamed)
 
     client.delete(f"/api/room-types/{rt.id}/")
     assert client.get("/api/room-types/").data["count"] == res1.data["count"]
@@ -240,6 +240,14 @@ def test_patients_list_is_never_cached(auth_client, admin_user, db):
 
 def test_schema_second_request_is_served_from_cache(auth_client, admin_user, db):
     client = auth_client(admin_user)
+    # Prime the SystemSettings cache outside the measured block -- every
+    # request now runs through SettingsAnonRateThrottle/SettingsUserRateThrottle
+    # (apps/core/throttling.py), whose get_rate() reads it; the first read
+    # after the autouse clear_cache fixture is a cache miss (one extra DB
+    # query) that has nothing to do with schema generation itself.
+    from apps.systemsettings.services import get_settings
+
+    get_settings()
     res1, n1 = _query_count(client, "/api/schema/")
     assert res1.status_code == 200
     assert n1 == 0  # schema generation touches no DB rows either way

@@ -11,7 +11,7 @@
 from apps.appointments.models import Appointment
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
-from apps.records.models import ConsultationLog, MedicalRecord
+from apps.records.models import MedicalRecord, RecordEntry
 
 MASK = "•"
 
@@ -36,16 +36,10 @@ def _make_doctor(user):
 
 
 def _make_record(patient, doctor_user, **overrides):
-    data = {
-        "title": "Follow-up",
-        "diagnosis": "Hypertension",
-        "notes": "Monitor weekly",
-    }
-    data.update(overrides)
     return MedicalRecord.objects.create(
         patient=patient,
         created_by=doctor_user,
-        **data,
+        **overrides,
     )
 
 
@@ -58,12 +52,21 @@ def _make_record(patient, doctor_user, **overrides):
 # IsAdminDoctorOrNurse), which supersedes the masking-for-those-roles
 # behavior these tests used to cover. Records masking for IT/CENTER_MANAGER
 # is now moot since they're blocked before masking would ever apply.
-def test_it_and_cm_cannot_read_records(auth_client, make_user, doctor_user):
+def test_it_cannot_read_records(auth_client, make_user, doctor_user):
     patient = _make_patient()
     record = _make_record(patient, doctor_user)
-    for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get(f"/api/medical-records/{record.id}/")
-        assert res.status_code == 403
+    res = auth_client(make_user("it", "IT")).get(f"/api/medical-records/{record.id}/")
+    assert res.status_code == 403
+
+
+def test_center_manager_can_read_records(auth_client, make_user, doctor_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit).
+    patient = _make_patient()
+    record = _make_record(patient, doctor_user)
+    res = auth_client(make_user("cm", "CENTER_MANAGER")).get(
+        f"/api/medical-records/{record.id}/"
+    )
+    assert res.status_code == 200
 
 
 def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor_user):
@@ -73,20 +76,34 @@ def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor
     assert res.status_code == 403
 
 
-def test_it_and_cm_cannot_read_consultation_logs(auth_client, make_user, doctor_user):
+def test_it_cannot_read_record_entries(auth_client, make_user, doctor_user):
     patient = _make_patient()
-    log = ConsultationLog.objects.create(
-        patient=patient,
-        doctor=doctor_user,
-        subjective="Headaches",
-        plan="MRI",
+    record = _make_record(patient, doctor_user)
+    entry = RecordEntry.objects.create(
+        record=record,
+        author=doctor_user,
+        status=RecordEntry.Status.COMPLETED,
+        observaciones="Headaches, plan: MRI",
     )
-    for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get(f"/api/consultation-logs/{log.id}/")
-        assert res.status_code == 403
+    res = auth_client(make_user("it", "IT")).get(f"/api/record-entries/{entry.id}/")
+    assert res.status_code == 403
 
 
-def test_it_and_cm_see_masked_patient_name_and_notes_on_appointment(
+def test_center_manager_can_read_record_entries(auth_client, make_user, doctor_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit).
+    patient = _make_patient()
+    record = _make_record(patient, doctor_user)
+    entry = RecordEntry.objects.create(
+        record=record,
+        author=doctor_user,
+        status=RecordEntry.Status.COMPLETED,
+        observaciones="Headaches, plan: MRI",
+    )
+    res = auth_client(make_user("cm", "CENTER_MANAGER")).get(f"/api/record-entries/{entry.id}/")
+    assert res.status_code == 200
+
+
+def test_it_sees_masked_patient_name_and_notes_on_appointment(
     auth_client, make_user, receptionist_user, doctor_user
 ):
     patient = _make_patient()
@@ -98,13 +115,32 @@ def test_it_and_cm_see_masked_patient_name_and_notes_on_appointment(
         notes="sensitive appointment note",
         created_by=receptionist_user,
     )
-    for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get(f"/api/appointments/{appt.id}/")
-        assert res.status_code == 200
-        assert res.data["patient_info"]["full_name"] != "Jane Doe"
-        assert MASK in res.data["patient_info"]["full_name"]
-        assert res.data["notes"] != "sensitive appointment note"
-        assert MASK in res.data["notes"]
+    res = auth_client(make_user("it", "IT")).get(f"/api/appointments/{appt.id}/")
+    assert res.status_code == 200
+    assert res.data["patient_info"]["full_name"] != "Jane Doe"
+    assert MASK in res.data["patient_info"]["full_name"]
+    assert res.data["notes"] != "sensitive appointment note"
+    assert MASK in res.data["notes"]
+
+
+def test_center_manager_sees_full_patient_name_and_notes_on_appointment(
+    auth_client, make_user, receptionist_user, doctor_user
+):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it sees full PII like admin, unlike IT.
+    patient = _make_patient()
+    profile = _make_doctor(doctor_user)
+    appt = Appointment.objects.create(
+        patient=patient,
+        doctor=profile,
+        date_time="2026-09-01T10:00:00Z",
+        notes="sensitive appointment note",
+        created_by=receptionist_user,
+    )
+    res = auth_client(make_user("cm", "CENTER_MANAGER")).get(f"/api/appointments/{appt.id}/")
+    assert res.status_code == 200
+    assert res.data["patient_info"]["full_name"] == "Jane Doe"
+    assert res.data["notes"] == "sensitive appointment note"
 
 
 # ---------------------------------------------------------------------------
@@ -237,13 +273,27 @@ def test_receptionist_can_search_by_name(auth_client, receptionist_user):
     assert res.data["count"] == 1
 
 
-def test_it_and_cm_cannot_search_by_name(auth_client, make_user):
+def test_it_cannot_search_by_name(auth_client, make_user):
     _make_patient(first_name="Jane", last_name="Smith")
     _make_patient(first_name="Peter", last_name="Jones")
-    for user in (make_user("it", "IT"), make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get("/api/patients/?search=jane")
-        assert res.status_code == 200
-        assert res.data["count"] == 2, "search must be ignored for masked roles"
-        res = auth_client(user).get("/api/patients/?search_name=janesmith")
-        assert res.status_code == 200
-        assert res.data["count"] == 2, "search_name filter must be ignored for masked roles"
+    user = make_user("it", "IT")
+    res = auth_client(user).get("/api/patients/?search=jane")
+    assert res.status_code == 200
+    assert res.data["count"] == 2, "search must be ignored for masked roles"
+    res = auth_client(user).get("/api/patients/?search_name=janesmith")
+    assert res.status_code == 200
+    assert res.data["count"] == 2, "search_name filter must be ignored for masked roles"
+
+
+def test_center_manager_can_search_by_name(auth_client, make_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # unlike IT it isn't a masked role and search isn't ignored for it.
+    _make_patient(first_name="Jane", last_name="Smith")
+    _make_patient(first_name="Peter", last_name="Jones")
+    user = make_user("cm", "CENTER_MANAGER")
+    res = auth_client(user).get("/api/patients/?search=jane")
+    assert res.status_code == 200
+    assert res.data["count"] == 1
+    res = auth_client(user).get("/api/patients/?search_name=jane%20smith")
+    assert res.status_code == 200
+    assert res.data["count"] == 1

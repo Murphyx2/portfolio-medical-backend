@@ -66,15 +66,15 @@ def _make_doctor(user, **overrides):
 
 
 def _make_service_type(**overrides):
-    data = {"name": "Consulta", "requires_doctor": False, "requires_diagnosis": True}
+    data = {"name": "Consulta", "requires_doctor": False}
     data.update(overrides)
     return ServiceType.objects.get_or_create(
-        name=data.pop("name"), defaults=data
+        name=data.pop("name").upper(), defaults=data
     )[0]
 
 
 def _make_room(center, **overrides):
-    room_type = RoomType.objects.get_or_create(name="Consult")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULT")[0]
     data = {"code": f"R{center.pk}", "name": "Room 1", "room_type": room_type, "center": center}
     data.update(overrides)
     return Room.objects.create(**data)
@@ -161,12 +161,8 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
     other_center = _make_center(code="C-OWNER-OTHER")
     owned_patient = _make_patient(cedula="00112345675")
     other_patient = _make_patient(cedula="00112345676", center=other_center)
-    record = MedicalRecord.objects.create(
-        patient=owned_patient, created_by=doctor_user, title="Note", diagnosis="x", notes="y"
-    )
-    other_record = MedicalRecord.objects.create(
-        patient=other_patient, created_by=doctor_user, title="Other", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=owned_patient, created_by=doctor_user)
+    other_record = MedicalRecord.objects.create(patient=other_patient, created_by=doctor_user)
 
     qs = scope_queryset(
         MedicalRecord.objects.all(), doctor_user, center_field="patient__center", owner_field="created_by"
@@ -189,7 +185,7 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
         ("nurse_user", False),
         ("receptionist_user", False),
         ("it_user", True),
-        ("center_manager_user", True),
+        ("center_manager_user", False),
     ],
 )
 def test_is_masked_role_per_role(request, role_fixture, expected):
@@ -224,9 +220,7 @@ def test_deactivate_with_cascade_cascades_to_related_soft_deletable_rows(doctor_
     """MedicalRecord.patient is on_delete=CASCADE (unlike Encounter.patient,
     which is PROTECT) -- it's the genuine cascade edge off Patient."""
     patient = _make_patient()
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Note", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
     assert patient.active is True
     assert record.active is True
 
@@ -452,17 +446,14 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
 
 def test_ready_for_active_requires_room(doctor_user):
     patient = _make_patient()
-    encounter = _make_encounter(
-        patient, doctor_user, service_type=_make_service_type(requires_diagnosis=False)
-    )
+    encounter = _make_encounter(patient, doctor_user)
     errors = encounter.ready_for_active()
     assert "A room is required to admit this encounter." in errors
 
 
 def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
     # Diagnosis capture was removed from the admission flow entirely --
-    # ready_for_active() no longer checks requires_diagnosis/primary
-    # diagnosis at all, regardless of the service type's flag.
+    # ready_for_active() never checks for a diagnosis at all.
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
@@ -470,20 +461,7 @@ def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
         patient,
         doctor_user,
         room=room,
-        service_type=_make_service_type(name="Needs Dx", requires_diagnosis=True),
-    )
-    assert encounter.ready_for_active() == []
-
-
-def test_ready_for_active_service_type_not_requiring_diagnosis_skips_check(doctor_user):
-    center = _make_center(code="C-READY3")
-    room = _make_room(center)
-    patient = _make_patient()
-    encounter = _make_encounter(
-        patient,
-        doctor_user,
-        room=room,
-        service_type=_make_service_type(name="No Dx Needed", requires_diagnosis=False),
+        service_type=_make_service_type(name="Needs Dx"),
     )
     assert encounter.ready_for_active() == []
 
@@ -687,28 +665,31 @@ def test_encounter_search_filter_unmasked_role_matches_patient_name_and_digits(
     assert list(qs.values_list("id", flat=True)) == [encounter.id]
 
 
-def test_record_search_filter_masked_role_restricted_to_title(it_user, doctor_user):
-    patient = _make_patient(first_name="Ana")
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Consulta general", diagnosis="x", notes="y"
-    )
+def test_record_search_filter_masked_role_matches_name_but_not_digits(it_user, doctor_user):
+    """RecordSearchFilter has no free-text field to search anymore (title
+    moved to RecordEntry-level content, which isn't searched here), so name
+    matching is unconditional (always_lookups) rather than gated behind an
+    unmasked role -- moot in production since IT/CENTER_MANAGER can't reach
+    /api/medical-records/ at all (IsAdminDoctorOrNurse), but this filter is
+    tested here in isolation from that permission layer."""
+    patient = _make_patient(first_name="Ana", cedula="00112345678")
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     request = _search_request(it_user, "Ana")
     qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
-    assert qs.count() == 0
-
-    request = _search_request(it_user, "Consulta")
-    qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
     assert list(qs.values_list("id", flat=True)) == [record.id]
+
+    # Digit-based matching stays gated to unmasked roles.
+    request = _search_request(it_user, "00112345678")
+    qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
+    assert qs.count() == 0
 
 
 def test_record_search_filter_unmasked_role_matches_patient_name_and_digits(
     receptionist_user, doctor_user
 ):
     patient = _make_patient(first_name="Ana", cedula="00112345678")
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Consulta general", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     request = _search_request(receptionist_user, "Ana")
     qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
@@ -729,14 +710,12 @@ def test_patient_search_filter_multiple_terms_are_and_ed(receptionist_user):
 
 
 def test_patient_search_filter_guardian_cedula_matches(receptionist_user):
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
 
     request = _search_request(receptionist_user, guardian_cedula)
@@ -748,14 +727,12 @@ def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_use
     """EncounterSearchFilter's digit lookup deliberately omits
     include_guardian -- confirms the one documented behavioral fork between
     PatientSearchFilter and EncounterSearchFilter."""
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
     _make_encounter(minor, doctor_user)
 

@@ -169,7 +169,7 @@ def test_service_list_includes_type_name(auth_client, admin_user):
     _service(type=st)
     res = auth_client(admin_user).get("/api/services/")
     assert res.status_code == 200, res.data
-    assert res.data["results"][0]["type_name"] == "Physical Therapy"
+    assert res.data["results"][0]["type_name"] == "PHYSICAL THERAPY"
 
 
 def test_deactivating_service_type_does_not_break_existing_services(
@@ -187,7 +187,7 @@ def test_deactivating_service_type_does_not_break_existing_services(
 
     res = auth_client(admin_user).get(f"/api/services/{svc.id}/")
     assert res.status_code == 200, res.data
-    assert res.data["type_name"] == "Dermatology"
+    assert res.data["type_name"] == "DERMATOLOGY"
 
 
 def test_seed_migration_created_default_service_types(db):
@@ -196,30 +196,27 @@ def test_seed_migration_created_default_service_types(db):
 
 
 # ---------------------------------------------------------------------------
-# requires_doctor/requires_diagnosis: drive the Admission form's conditional
-# doctor requirement and admit-time diagnosis requirement (merged in from
-# the former apps.encounters.EncounterType).
+# requires_doctor: drives the Admission form's conditional doctor
+# requirement (merged in from the former apps.encounters.EncounterType).
 # ---------------------------------------------------------------------------
 
 
-def test_service_type_requires_doctor_and_diagnosis_defaults(auth_client, admin_user):
+def test_service_type_requires_doctor_defaults(auth_client, admin_user):
     res = auth_client(admin_user).post(
         "/api/service-types/", {"name": "Chequeo"}, format="json"
     )
     assert res.status_code == 201, res.data
     assert res.data["requires_doctor"] is False
-    assert res.data["requires_diagnosis"] is True
 
 
-def test_service_type_requires_doctor_and_diagnosis_round_trip(auth_client, admin_user):
+def test_service_type_requires_doctor_round_trip(auth_client, admin_user):
     res = auth_client(admin_user).post(
         "/api/service-types/",
-        {"name": "Laboratorio", "requires_doctor": False, "requires_diagnosis": False},
+        {"name": "Laboratorio", "requires_doctor": False},
         format="json",
     )
     assert res.status_code == 201, res.data
     assert res.data["requires_doctor"] is False
-    assert res.data["requires_diagnosis"] is False
 
     st_id = res.data["id"]
     res = auth_client(admin_user).patch(

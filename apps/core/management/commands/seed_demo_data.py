@@ -13,9 +13,9 @@ adding more sections to this same command.
 
 Deletes every Patient row (a real DB delete, not the soft-delete the API
 uses -- see apps/core/mixins.py) which cascades away every MedicalRecord,
-ConsultationLog, RecordImage, and Appointment tied to those patients too,
-then creates fresh patients (unique cedula always, unique NSS when present)
-and medical records against them.
+RecordEntry, RecordImage, and Appointment tied to those patients too, then
+creates fresh patients (unique cedula always, unique NSS when present) and
+expedientes (MedicalRecord anchor + one completed RecordEntry) against them.
 """
 
 import random
@@ -26,8 +26,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.ars.models import ARS
-from apps.patients.models import Patient
-from apps.records.models import MedicalRecord
+from apps.patients.models import Patient, PatientGuardian
+from apps.records.models import MedicalRecord, RecordEntry
 
 FIRST_NAMES = [
     "Jose", "Luis", "Carlos", "Juan", "Miguel", "Rafael", "Pedro", "Manuel",
@@ -78,7 +78,7 @@ class Command(BaseCommand):
         if not options["confirm"]:
             raise CommandError(
                 "Refusing to run without --confirm (this deletes all Patient/"
-                "MedicalRecord/ConsultationLog/RecordImage/Appointment data)."
+                "MedicalRecord/RecordEntry/RecordImage/Appointment data)."
             )
         n_patients = options["patients"]
         n_records = options["records"]
@@ -138,11 +138,13 @@ class Command(BaseCommand):
                 nss=nss,
             )
             age = self._age(birth_date)
-            if age < 18:
-                patient_kwargs.update(self._guardian_kwargs(rng))
-            elif age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
+            is_minor = age < 18
+            if not is_minor and age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
                 patient_kwargs.update(self._ars_kwargs(rng, ars_choices))
-            patients.append(Patient.objects.create(**patient_kwargs))
+            patient = Patient.objects.create(**patient_kwargs)
+            if is_minor:
+                PatientGuardian.objects.create(patient=patient, **self._guardian_kwargs(rng))
+            patients.append(patient)
         return patients
 
     @staticmethod
@@ -152,17 +154,16 @@ class Command(BaseCommand):
         return {"ars": ars, "ars_program": rng.choice(programs) if programs else None}
 
     def _guardian_kwargs(self, rng: random.Random) -> dict:
-        """Synthetic guardian/tutor info for a minor patient (no uniqueness
-        needed -- siblings can legitimately share a guardian)."""
+        """Synthetic PatientGuardian fields for a minor patient (no
+        uniqueness needed -- siblings can legitimately share a guardian)."""
         return {
-            "has_guardian": True,
-            "guardian_first_name": rng.choice(FIRST_NAMES),
-            "guardian_last_name": f"{rng.choice(LAST_NAMES)} {rng.choice(LAST_NAMES)}",
-            "guardian_cedula": "".join(str(rng.randint(0, 9)) for _ in range(11)),
-            "guardian_nss": (
+            "first_name": rng.choice(FIRST_NAMES),
+            "last_name": f"{rng.choice(LAST_NAMES)} {rng.choice(LAST_NAMES)}",
+            "cedula": "".join(str(rng.randint(0, 9)) for _ in range(11)),
+            "nss": (
                 "".join(str(rng.randint(0, 9)) for _ in range(11)) if rng.random() < 0.5 else ""
             ),
-            "guardian_phone": f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
+            "phone": f"{rng.choice(DR_AREA_CODES)}{rng.randint(1000000, 9999999)}",
         }
 
     @staticmethod
@@ -179,16 +180,17 @@ class Command(BaseCommand):
     ) -> list[MedicalRecord]:
         records = []
         for patient in patients:
-            records.append(
-                MedicalRecord.objects.create(
-                    patient=patient,
-                    created_by=created_by,
-                    title=rng.choice(RECORD_TITLES),
-                    diagnosis="Sin hallazgos significativos.",
-                    treatment="Reposo y seguimiento en consulta de control.",
-                    notes="Registro generado por seed_demo_data.",
-                )
+            record = MedicalRecord.objects.create(patient=patient, created_by=created_by)
+            RecordEntry.objects.create(
+                record=record,
+                author=created_by,
+                status=RecordEntry.Status.COMPLETED,
+                dx="Sin hallazgos significativos.",
+                tx="Reposo y seguimiento en consulta de control.",
+                observaciones=f"{rng.choice(RECORD_TITLES)} -- generado por seed_demo_data.",
+                completed_at=record.created_at,
             )
+            records.append(record)
         return records
 
     @staticmethod

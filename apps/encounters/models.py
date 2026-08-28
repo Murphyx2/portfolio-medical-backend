@@ -37,8 +37,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     encounter_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
     # Same catalog Services are categorized under (apps/services.ServiceType)
     # -- selecting one narrows the Services section to that type's services,
-    # and its requires_doctor/requires_diagnosis flags drive the doctor and
-    # admit-time diagnosis requirements below.
+    # and its requires_doctor flag drives the doctor requirement below.
     service_type = models.ForeignKey(
         "services.ServiceType", on_delete=models.PROTECT, related_name="encounters"
     )
@@ -81,7 +80,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     admitted_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     # Free-text clinical fields: masked in the serializer for non-clinical
-    # roles (same convention as MedicalRecord.diagnosis/ConsultationLog),
+    # roles (same convention as apps.records' RecordEntry dx/tx/observaciones),
     # not encrypted at rest -- matches the existing records app precedent.
     chief_complaint = models.TextField(blank=True)
     cancel_reason = models.CharField(max_length=255, blank=True)
