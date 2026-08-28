@@ -188,6 +188,7 @@ class MedicalRecordSerializer(CoreModelSerializer):
             "last_fc", "last_fc_at",
             "last_fr", "last_fr_at",
             "last_glucose", "last_glucose_at",
+            "habits_snapshot",
             "images",
             "personal_conditions",
             "family_conditions",
@@ -198,7 +199,7 @@ class MedicalRecordSerializer(CoreModelSerializer):
             "last_visit_at", "last_height_cm", "last_height_at", "last_weight_lb",
             "last_weight_at", "last_imc", "last_imc_at", "last_ta_systolic",
             "last_ta_diastolic", "last_ta_at", "last_fc", "last_fc_at", "last_fr",
-            "last_fr_at", "last_glucose", "last_glucose_at",
+            "last_fr_at", "last_glucose", "last_glucose_at", "habits_snapshot",
         ]
 
     def get_created_by_name(self, obj):
@@ -224,6 +225,7 @@ class RecordEntrySerializer(CoreModelSerializer):
             "ta_systolic", "ta_diastolic", "fc", "fr", "weight_lb", "height_cm",
             "talla_cm", "temperature_c", "glucose", "vitals_notes", "imc",
             "dx", "tx", "observaciones",
+            "habits", "habits_notes",
             "personal_ap_snapshot", "family_ap_snapshot", "completed_at",
             "created_at", "updated_at",
         ]
@@ -262,6 +264,57 @@ class RecordEntrySerializer(CoreModelSerializer):
     def validate_glucose(self, value):
         return _validate_range(value, 20, 1000, "Glucosa")
 
+    def validate_habits(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Habits must be an object.")
+        allowed_keys = {
+            "tabaco", "alcohol", "cafe", "vapeo", "psicoactivas",
+            "actividad_fisica", "sueno", "patron_alimentario", "otros",
+        }
+        unknown = set(value.keys()) - allowed_keys
+        if unknown:
+            raise serializers.ValidationError(f"Unknown habit key(s): {', '.join(sorted(unknown))}.")
+
+        substance_statuses = {"no_registrado", "nunca", "ex", "ocasional", "activo"}
+        status_enums = {
+            "tabaco": substance_statuses,
+            "alcohol": substance_statuses,
+            "cafe": substance_statuses,
+            "vapeo": substance_statuses,
+            "psicoactivas": substance_statuses,
+            "actividad_fisica": {"no_registrado", "sedentario", "insuficiente", "adecuado", "intenso"},
+            "sueno": {"no_registrado", "reparador", "irregular", "insomnio"},
+        }
+        for key, enum in status_enums.items():
+            entry = value.get(key)
+            if entry is None:
+                continue
+            if not isinstance(entry, dict):
+                raise serializers.ValidationError(f"'{key}' must be an object.")
+            status = entry.get("status")
+            if status is not None and status not in enum:
+                raise serializers.ValidationError(f"Invalid status '{status}' for '{key}'.")
+
+        diet = value.get("patron_alimentario")
+        if diet is not None:
+            if not isinstance(diet, dict) or not isinstance(diet.get("tags", []), list):
+                raise serializers.ValidationError("'patron_alimentario.tags' must be a list.")
+            if not all(isinstance(t, str) for t in diet.get("tags", [])):
+                raise serializers.ValidationError("'patron_alimentario.tags' must be strings.")
+
+        otros = value.get("otros")
+        if otros is not None:
+            if not isinstance(otros, list):
+                raise serializers.ValidationError("'otros' must be a list.")
+            for item in otros:
+                if not isinstance(item, dict) or not isinstance(item.get("name", ""), str):
+                    raise serializers.ValidationError("Each 'otros' entry needs a string 'name'.")
+                if len(item.get("name", "")) > 80:
+                    raise serializers.ValidationError("'otros' name must be 80 characters or fewer.")
+                if len(item.get("note", "") or "") > 1000:
+                    raise serializers.ValidationError("'otros' note must be 1000 characters or fewer.")
+        return value
+
     def validate(self, attrs):
         systolic = attrs.get("ta_systolic", getattr(self.instance, "ta_systolic", None))
         diastolic = attrs.get("ta_diastolic", getattr(self.instance, "ta_diastolic", None))
@@ -280,8 +333,9 @@ class RecordEntrySerializer(CoreModelSerializer):
         return apply_masking(
             data,
             self._request_user(),
-            clinical_fields=("dx", "tx", "observaciones"),
+            clinical_fields=("dx", "tx", "observaciones", "habits_notes"),
             masked_fields=("author_name",),
+            masked_nulls=("habits",),
         )
 
 
