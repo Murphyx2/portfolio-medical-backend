@@ -53,6 +53,13 @@ class MedicalRecord(TimestampedModel, SoftDeleteModel):
     last_glucose = models.PositiveSmallIntegerField(null=True, blank=True)
     last_glucose_at = models.DateTimeField(null=True, blank=True)
 
+    # Living/current per-habit state ({key: {status, at, pack_years?}, ...})
+    # -- same caching role as the last_* fields above, but one JSONField
+    # since the habit-key set is fixed and small (see RecordEntry.habits
+    # for the draft/historical counterpart). Recomputed in
+    # RecordEntry.complete(); never touched by drafts.
+    habits_snapshot = models.JSONField(default=dict, blank=True)
+
     class Meta:
         # F(...).desc(nulls_last=True): Postgres defaults DESC to NULLS
         # FIRST, which would rank never-visited patients above recently
@@ -113,6 +120,15 @@ class RecordEntry(TimestampedModel):
     personal_ap_snapshot = models.JSONField(default=list, blank=True)
     family_ap_snapshot = models.JSONField(default=list, blank=True)
 
+    # Draft-mutable, then frozen as-is at complete() time (like dx/tx, not
+    # like the AP snapshots above -- there's no separate living table to
+    # re-derive from). Keyed by fixed habit keys; see
+    # MedicalRecord.habits_snapshot for the living/current-state cache this
+    # feeds on complete(). habits_notes mirrors vitals_notes: plain, not
+    # encrypted, a short free-text field alongside the structured JSON.
+    habits = models.JSONField(default=dict, blank=True)
+    habits_notes = models.CharField(max_length=1000, blank=True, default="")
+
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -151,7 +167,28 @@ class RecordEntry(TimestampedModel):
             or self.observaciones
             or self.record.personal_conditions.exists()
             or self.record.family_conditions.exists()
+            or bool(self.habits_notes)
+            or self._has_recorded_habit_content()
         )
+
+    def _has_recorded_habit_content(self) -> bool:
+        """A habit only counts as content with an actual signal: a status
+        other than no_registrado, non-empty diet tags, or a named "otro"
+        entry. Opening/collapsing a card left at no_registrado -- or a
+        no_registrado carried over untouched -- must not count (spec §11:
+        "First open shows No reg. / —, never 0.00" and the save must stay
+        blocked until something is actually recorded)."""
+        for key in ("tabaco", "alcohol", "cafe", "vapeo", "psicoactivas", "actividad_fisica", "sueno"):
+            entry = self.habits.get(key)
+            if entry and entry.get("status") not in (None, "no_registrado"):
+                return True
+        diet = self.habits.get("patron_alimentario")
+        if diet and diet.get("tags"):
+            return True
+        for item in self.habits.get("otros", []):
+            if (item.get("name") or "").strip():
+                return True
+        return False
 
     def complete(self, actor):
         """Transactionally: validate there's something to save, recompute
@@ -171,7 +208,7 @@ class RecordEntry(TimestampedModel):
         from django.db import transaction
         from django.utils import timezone
 
-        from apps.records.services import compute_imc
+        from apps.records.services import compute_imc, compute_pack_years
 
         with transaction.atomic():
             record = MedicalRecord.objects.select_for_update().get(pk=self.record_id)
@@ -212,6 +249,51 @@ class RecordEntry(TimestampedModel):
                     record.last_imc_at = max(
                         record.last_height_at or now, record.last_weight_at or now
                     )
+            # Habits: recompute the living MedicalRecord.habits_snapshot
+            # cache from this entry's draft. Unlike the vitals last-*
+            # fields above (which never blank a previously recorded
+            # "último"), a habit explicitly reverted to no_registrado on a
+            # COMPLETED save DOES clear the living value -- spec §7.3. The
+            # prior RecordEntry.habits row stays frozen/historical either
+            # way, so Historial keeps the old line regardless.
+            status_habit_keys = (
+                "tabaco", "vapeo", "alcohol", "cafe", "psicoactivas",
+                "actividad_fisica", "sueno",
+            )
+            snapshot = dict(record.habits_snapshot)
+            for key in status_habit_keys:
+                entry_val = self.habits.get(key)
+                if entry_val is None:
+                    continue  # untouched this entry -- leave living state alone
+                new_status = entry_val.get("status", "no_registrado")
+                if new_status == "no_registrado":
+                    snapshot.pop(key, None)
+                    continue
+                data = {"status": new_status, "at": now.isoformat()}
+                if key == "tabaco" and entry_val.get("cantidad_dia") and entry_val.get("tiempo_anios"):
+                    data["pack_years"] = str(
+                        compute_pack_years(entry_val["cantidad_dia"], entry_val["tiempo_anios"])
+                    )
+                snapshot[key] = data
+
+            diet = self.habits.get("patron_alimentario")
+            if diet is not None:
+                tags = diet.get("tags") or []
+                if tags:
+                    snapshot["patron_alimentario"] = {"tags": tags, "at": now.isoformat()}
+                else:
+                    snapshot.pop("patron_alimentario", None)
+
+            otros = self.habits.get("otros")
+            if otros is not None:
+                items = [o for o in otros if (o.get("name") or "").strip()]
+                if items:
+                    snapshot["otros"] = {"items": items, "at": now.isoformat()}
+                else:
+                    snapshot.pop("otros", None)
+
+            record.habits_snapshot = snapshot
+
             record.last_visit_at = now
 
             self.personal_ap_snapshot = [
