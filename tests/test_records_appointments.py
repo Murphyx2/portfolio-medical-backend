@@ -3,7 +3,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
-from apps.records.models import MedicalRecord, RecordEntry
+from apps.records.models import MedicalRecord, RecordEntry, RecordImage
 from apps.services.models import Service, ServiceType
 
 
@@ -120,6 +120,18 @@ def test_record_entry_creation(auth_client, doctor_user, receptionist_user):
     assert res.status_code == 201
     entry = RecordEntry.objects.get()
     assert entry.author == doctor_user
+
+
+def test_record_image_serializes_created_at(auth_client, doctor_user, receptionist_user):
+    patient = _make_patient(receptionist_user)
+    record = _make_record(patient, doctor_user)
+    RecordImage.objects.create(record=record, image="test.jpg", caption="x")
+
+    res = auth_client(doctor_user).get("/api/medical-records/")
+    assert res.status_code == 200
+    images = res.data["results"][0]["images"]
+    assert len(images) == 1
+    assert images[0]["created_at"] is not None
 
 
 def test_medicine_crud_for_admin(auth_client, admin_user):

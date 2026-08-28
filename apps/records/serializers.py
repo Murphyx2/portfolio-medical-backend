@@ -70,8 +70,24 @@ class RecordImageSerializer(CoreModelSerializer):
 
     class Meta:
         model = RecordImage
-        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active"]
-        read_only_fields = ["id", "image_url", "uploaded_by"]
+        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active", "created_at"]
+        read_only_fields = ["id", "image_url", "uploaded_by", "created_at"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # This is the app's only multipart/form-data endpoint (it carries the
+        # file). DRF's BooleanField treats a key missing from HTML-style form
+        # data as an unchecked checkbox -> False, not "apply the model
+        # default" -- unlike a JSON POST, where a missing key just uses the
+        # default. CoreModelSerializer's admin-writable `active` exists for
+        # soft-delete/restore via PATCH on an existing row; on create it was
+        # silently flipping every upload to active=False for any role that
+        # can_view_inactive (ADMIN/CENTER_MANAGER), since the frontend never
+        # sends an `active` field when uploading. Force it read-only on
+        # create only, so a new image always gets the real model default.
+        if self.instance is None and "active" in fields:
+            fields["active"].read_only = True
+        return fields
 
     def validate_image(self, value):
         if value is None:

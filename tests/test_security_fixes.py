@@ -181,6 +181,39 @@ def test_doctor_image_for_foreign_record_allowed(auth_client, make_user):
     assert res.status_code == 201, res.data
 
 
+def test_record_image_upload_by_admin_is_active(auth_client, make_user):
+    # CoreModelSerializer makes `active` writable for roles that can view
+    # inactive rows (ADMIN/CENTER_MANAGER). Uploading is the app's only
+    # multipart/form-data create endpoint, and DRF's BooleanField treats a
+    # key missing from HTML-style form data as an unchecked checkbox (False)
+    # rather than "apply the model default" -- the frontend never sends
+    # `active`, so this silently created inactive (invisible) images for
+    # exactly the roles most likely to be testing/uploading. Guard: an
+    # admin's upload must come back active regardless of that quirk.
+    admin = make_user("admin2", "ADMIN")
+    doc = make_user("doc", "DOCTOR")
+    patient = _make_patient()
+    record = MedicalRecord.objects.create(patient=patient, created_by=doc)
+
+    buf = BytesIO()
+    PILImage.new("RGB", (4, 4), "red").save(buf, format="PNG")
+    buf.seek(0)
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    upload = SimpleUploadedFile("x.png", buf.read(), content_type="image/png")
+    res = auth_client(admin).post(
+        "/api/images/",
+        {"record": record.id, "image": upload, "caption": "x"},
+        format="multipart",
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["active"] is True
+
+    record_res = auth_client(admin).get(f"/api/medical-records/{record.id}/")
+    assert len(record_res.data["images"]) == 1
+
+
 def test_record_image_list_is_unscoped_for_doctor(auth_client, make_user):
     doc = make_user("doc", "DOCTOR")
     other_doc = make_user("other", "DOCTOR")
