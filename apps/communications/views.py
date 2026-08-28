@@ -4,6 +4,7 @@ import json
 import logging
 
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.generics import RetrieveUpdateAPIView
@@ -145,6 +146,8 @@ class MessageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     permission_classes = [IsStaffUser]
     write_permission_classes = [CanSendStaffEmail]
     http_method_names = ["get", "post", "head", "options"]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = {"status": ["exact", "in"], "kind": ["exact"]}
 
     def get_queryset(self):
         qs = super().get_queryset()
