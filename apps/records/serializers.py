@@ -70,8 +70,8 @@ class RecordImageSerializer(CoreModelSerializer):
 
     class Meta:
         model = RecordImage
-        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active"]
-        read_only_fields = ["id", "image_url", "uploaded_by"]
+        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active", "created_at"]
+        read_only_fields = ["id", "image_url", "uploaded_by", "created_at"]
 
     def validate_image(self, value):
         if value is None:
