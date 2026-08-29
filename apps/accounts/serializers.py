@@ -8,6 +8,7 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="get_full_name", read_only=True)
     is_locked = serializers.BooleanField(read_only=True)
+    center_name = serializers.CharField(source="center.name", read_only=True, default=None)
 
     class Meta:
         model = User
@@ -19,6 +20,8 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "role",
+            "center",
+            "center_name",
             "is_active",
             "is_locked",
             "locked_until",
@@ -45,6 +48,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "last_name",
             "password",
             "role",
+            "center",
             "is_active",
         ]
 

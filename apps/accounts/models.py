@@ -32,6 +32,18 @@ class User(AbstractUser):
     failed_login_count = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
 
+    # Only meaningful for CENTER_MANAGER: which center they manage, used to
+    # scope center-restricted features (e.g. Reportes) to that one center.
+    # Other roles are center-agnostic today (see
+    # apps/core/services/scoping.py::user_accessible_center_ids).
+    center = models.ForeignKey(
+        "centers.MedicalCenter",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="managed_by",
+    )
+
     @property
     def is_locked(self) -> bool:
         return bool(self.locked_until and self.locked_until > timezone.now())
