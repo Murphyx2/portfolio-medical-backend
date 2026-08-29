@@ -400,6 +400,21 @@ class CanSendManualReminder(RoleUnionPermission):
     )
 
 
+class IsReportesViewer(RoleUnionPermission):
+    """Reportes page + Generar: TI/Admin (any center) and Gerente de centro
+    (own center only -- enforced in the view, not here, since it's an
+    object/param-level scope, not a role gate)."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.IT, User.Role.CENTER_MANAGER)
+
+
+class IsReportesEditor(RoleUnionPermission):
+    """Create/edit/deactivate report and pack definitions: TI/Admin only --
+    Gerente de centro may generate but not author definitions."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.IT)
+
+
 class PatientDataPermission(BasePermission):
     """
     Patient data is sensitive: writes require Admin/Doctor/Receptionist/Nurse/

@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "apps.encounters",
     "apps.systemsettings",
     "apps.communications",
+    "apps.reportes",
 ]
 
 MIDDLEWARE = [
