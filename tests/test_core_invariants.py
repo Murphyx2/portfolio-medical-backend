@@ -445,8 +445,14 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
 
 
 def test_ready_for_active_requires_room(doctor_user):
+    from apps.services.models import Service
+
     patient = _make_patient()
     encounter = _make_encounter(patient, doctor_user)
+    service = Service.objects.create(
+        simon="100010", name="Ready room test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service)
     errors = encounter.ready_for_active()
     assert "A room is required to admit this encounter." in errors
 
@@ -454,15 +460,20 @@ def test_ready_for_active_requires_room(doctor_user):
 def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
     # Diagnosis capture was removed from the admission flow entirely --
     # ready_for_active() never checks for a diagnosis at all.
+    from apps.services.models import Service
+
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
     encounter = _make_encounter(
         patient,
         doctor_user,
-        room=room,
         service_type=_make_service_type(name="Needs Dx"),
     )
+    service = Service.objects.create(
+        simon="100011", name="Ready no dx test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, room=room)
     assert encounter.ready_for_active() == []
 
 

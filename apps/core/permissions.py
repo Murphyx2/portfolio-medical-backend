@@ -23,10 +23,19 @@ def is_staff_role(user) -> bool:
 
 
 def is_owner_doctor(user, obj) -> bool:
-    """True unless `user` is a doctor who doesn't own `obj.doctor` --
-    previously copy-pasted identically across CanDeleteAppointments,
-    CanManageAppointments, and CanManageEncounters."""
-    return not (getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id)
+    """True unless `user` is a doctor who doesn't own `obj` -- previously
+    copy-pasted identically across CanDeleteAppointments,
+    CanManageAppointments, and CanManageEncounters.
+
+    Objects with a single `doctor` FK (Appointment) compare it directly.
+    Encounter has no `doctor` of its own anymore -- coverage moved to a
+    per-service-line `EncounterService.doctor` -- so ownership there means
+    "assigned to at least one of this encounter's service lines"."""
+    if not getattr(user, "is_doctor", False):
+        return True
+    if hasattr(obj, "services"):
+        return obj.services.filter(doctor__user_id=user.id).exists()
+    return obj.doctor.user_id == user.id
 
 
 class RoleUnionPermission(BasePermission):

@@ -18,7 +18,7 @@ class EncounterSearchFilter(SearchFilterBase):
     """
 
     def always_lookups(self, term: str) -> Q:
-        return Q(doctor__code__icontains=term) | Q(encounter_number__icontains=term)
+        return Q(services__doctor__code__icontains=term) | Q(encounter_number__icontains=term)
 
     def gated_lookups(self, term: str) -> Q:
         return Q(patient__search_name__icontains=term) | Q(chief_complaint__icontains=term)
