@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -44,28 +45,9 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     patient = models.ForeignKey(
         "patients.Patient", on_delete=models.PROTECT, related_name="encounters"
     )
-    # Nullable: only required when service_type.requires_doctor is true (see
-    # EncounterSerializer.validate()) -- not every service needs a doctor
-    # present (e.g. a lab-only visit).
-    doctor = models.ForeignKey(
-        "doctors.DoctorProfile",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="encounters",
-    )
     # Free text for now -- full referral routing/cross-center workflow is
     # deferred; this just records who referred the patient, if anyone.
     referring_doctor_name = models.CharField(max_length=200, blank=True)
-    # Nullable: required only once the encounter goes ACTIVE (see
-    # ready_for_active()), not while still a DRAFT.
-    room = models.ForeignKey(
-        "rooms.Room",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="encounters",
-    )
     center = models.ForeignKey(
         "centers.MedicalCenter",
         on_delete=models.PROTECT,
@@ -96,7 +78,6 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         blank=True,
         related_name="encounters",
     )
-    authorization_number = models.CharField(max_length=100, blank=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_encounters"
@@ -119,7 +100,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         check reusable from serializer validation too.
         """
         errors = []
-        if self.room_id is None:
+        if self.services.exclude(status=EncounterService.Status.CANCELLED).filter(room__isnull=True).exists():
             errors.append("A room is required to admit this encounter.")
         return errors
 
@@ -210,9 +191,25 @@ class EncounterService(TimestampedModel):
         blank=True,
         related_name="encounter_services",
     )
+    # Nullable: required only once the encounter goes ACTIVE (see
+    # Encounter.ready_for_active()), not while still a DRAFT.
+    room = models.ForeignKey(
+        "rooms.Room",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="encounter_services",
+    )
     quantity = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Per-service coverage: whether this line is billed under the
+    # encounter's ARS -- lets one visit mix ARS-covered and particular
+    # (uncovered) services instead of an all-or-nothing encounter-level flag.
+    ars_covered = models.BooleanField(default=True)
+    authorization_number = models.PositiveIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(1)]
+    )
 
     class Meta:
         ordering = ["id"]

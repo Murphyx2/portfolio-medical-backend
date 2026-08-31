@@ -4,7 +4,6 @@ from rest_framework import serializers
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import is_own_doctor_relation, program_belongs_to_ars
-from apps.doctors.serializers import DoctorLiteSerializer
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 from apps.patients.serializers import PatientSummarySerializer as _PatientSummaryBase
 
@@ -64,12 +63,13 @@ class EncounterDiagnosisSerializer(serializers.ModelSerializer):
         fields = ["id", "description", "is_primary"]
 
 
-class EncounterServiceSerializer(serializers.ModelSerializer):
+class EncounterServiceSerializer(CoreModelSerializer):
     id = serializers.IntegerField(required=False)
     service_name = serializers.CharField(source="service.name", read_only=True)
     doctor_name = serializers.CharField(
         source="doctor.full_name", read_only=True, default=None
     )
+    room_name = serializers.CharField(source="room.name", read_only=True, default=None)
 
     class Meta:
         model = EncounterService
@@ -79,16 +79,43 @@ class EncounterServiceSerializer(serializers.ModelSerializer):
             "service_name",
             "doctor",
             "doctor_name",
+            "room",
+            "room_name",
             "quantity",
             "notes",
             "status",
+            "ars_covered",
+            "authorization_number",
         ]
+
+    def validate_doctor(self, value):
+        if value is None:
+            return value
+        user = self._request_user()
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Doctors may only manage encounters for themselves."
+            )
+        return value
+
+    def validate(self, attrs):
+        # Never persist a stale authorization number for an uncovered
+        # line -- don't trust the frontend to have cleared it.
+        ars_covered = attrs.get("ars_covered", getattr(self.instance, "ars_covered", True))
+        if not ars_covered:
+            attrs["authorization_number"] = None
+
+        service = attrs.get("service", getattr(self.instance, "service", None))
+        doctor = attrs.get("doctor", getattr(self.instance, "doctor", None))
+        if service is not None and service.type.requires_doctor and doctor is None:
+            raise serializers.ValidationError(
+                {"doctor": "A doctor is required for this service."}
+            )
+        return attrs
 
 
 class EncounterSerializer(CoreModelSerializer):
     patient_info = PatientSummarySerializer(source="patient", read_only=True)
-    doctor_info = DoctorLiteSerializer(source="doctor", read_only=True)
-    room_name = serializers.CharField(source="room.name", read_only=True, default=None)
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
     service_type_name = serializers.CharField(source="service_type.name", read_only=True)
     ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
@@ -108,11 +135,7 @@ class EncounterSerializer(CoreModelSerializer):
             "service_type_name",
             "patient",
             "patient_info",
-            "doctor",
-            "doctor_info",
             "referring_doctor_name",
-            "room",
-            "room_name",
             "center",
             "center_name",
             "status",
@@ -125,7 +148,6 @@ class EncounterSerializer(CoreModelSerializer):
             "ars_name",
             "ars_program",
             "ars_program_name",
-            "authorization_number",
             "diagnoses",
             "services",
             "created_by",
@@ -149,16 +171,6 @@ class EncounterSerializer(CoreModelSerializer):
     def get_created_by_name(self, obj):
         return full_name_or_username(obj.created_by)
 
-    def validate_doctor(self, value):
-        if value is None:
-            return value
-        user = self._request_user()
-        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
-            raise serializers.ValidationError(
-                "Doctors may only manage encounters for themselves."
-            )
-        return value
-
     def validate(self, attrs):
         ars = attrs.get("ars")
         if ars is None and self.instance is not None:
@@ -167,15 +179,6 @@ class EncounterSerializer(CoreModelSerializer):
         if not program_belongs_to_ars(ars, program):
             raise serializers.ValidationError(
                 {"ars_program": "The selected program does not belong to the selected ARS."}
-            )
-
-        service_type = attrs.get(
-            "service_type", self.instance.service_type if self.instance else None
-        )
-        doctor = attrs.get("doctor", self.instance.doctor if self.instance else None)
-        if service_type is not None and service_type.requires_doctor and doctor is None:
-            raise serializers.ValidationError(
-                {"doctor": "A doctor is required for this service type."}
             )
 
         services = attrs.get("services")
@@ -232,9 +235,12 @@ class EncounterSerializer(CoreModelSerializer):
             build_fields=lambda item: {
                 "service": item.get("service"),
                 "doctor": item.get("doctor"),
+                "room": item.get("room"),
                 "quantity": item.get("quantity", 1),
                 "notes": item.get("notes", ""),
                 "status": item.get("status", EncounterService.Status.PENDING),
+                "ars_covered": item.get("ars_covered", True),
+                "authorization_number": item.get("authorization_number") if item.get("ars_covered", True) else None,
             },
         )
 
