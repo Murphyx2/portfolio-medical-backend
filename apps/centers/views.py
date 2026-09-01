@@ -1,7 +1,6 @@
 from django.db.models import Count
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
@@ -9,7 +8,7 @@ from apps.centers.serializers import (
     DoctorCenterBindingSerializer,
     MedicalCenterSerializer,
 )
-from apps.core.mixins import AuditMixin
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import IsAdminOrCenterManager, IsStaffUser
 from apps.core.viewsets import ReferenceDataViewSet
 
@@ -30,10 +29,11 @@ class MedicalCenterViewSet(ReferenceDataViewSet):
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
 
 
-class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
+class DoctorCenterBindingViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = DoctorCenterBinding.all_objects.select_related("doctor__user", "center")
     serializer_class = DoctorCenterBindingSerializer
     permission_classes = [IsStaffUser]
+    write_permission_classes = [IsAdminOrCenterManager]
     filterset_fields = ["doctor", "center", "approved"]
 
     def get_queryset(self):
@@ -41,11 +41,6 @@ class DoctorCenterBindingViewSet(AuditMixin, viewsets.ModelViewSet):
         if getattr(self.request.user, "is_doctor", False):
             qs = qs.filter(doctor__user=self.request.user)
         return qs
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsAdminOrCenterManager]
-        return super().get_permissions()
 
     def perform_create(self, serializer):
         serializer.save(approved_by=self.request.user, approved=True)
