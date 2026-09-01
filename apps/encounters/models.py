@@ -89,6 +89,9 @@ class Encounter(TimestampedModel, SoftDeleteModel):
             models.Index(fields=["created_at"]),
             models.Index(fields=["patient", "status"]),
             models.Index(fields=["status", "created_at"]),
+            # Sized to the reportes engine's real filter shape (status +
+            # center + a completed_at range) -- see apps/reportes/services/engine.py.
+            models.Index(fields=["status", "center", "-completed_at"]),
         ]
 
     def ready_for_active(self) -> list[str]:

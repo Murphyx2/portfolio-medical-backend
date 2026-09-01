@@ -56,5 +56,10 @@ def patient_ids_matching_digits(term: str, *, include_guardian: bool = False):
                 q |= Q(guardians__cedula_last4__icontains=tail)
     qs = Patient.objects.filter(q)
     if include_guardian:
-        qs = qs.distinct()
+        # Clear Patient's default ordering (["search_name"]) before distinct()
+        # -- left in place, Postgres/Django keeps it in the SELECT/ORDER BY
+        # alongside the values_list() column, which can silently defeat
+        # dedup (same class of bug already fixed once in
+        # reportes/services/engine.py::distinct_ars_program_slices).
+        qs = qs.order_by().distinct()
     return qs.values_list("id", flat=True)

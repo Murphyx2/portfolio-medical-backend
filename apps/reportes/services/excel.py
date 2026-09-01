@@ -26,6 +26,17 @@ def _safe_filename_part(text: str) -> str:
     return "".join(c for c in text if c not in '\\/:*?"<>|').strip()
 
 
+def _sanitize_cell(value):
+    """Neutralize spreadsheet formula injection: a string cell value starting
+    with =/+/-/@ is interpreted as a live formula by Excel on open. Every
+    value here can originate from admin/receptionist-editable reference data
+    (service/medicine names, center names) or a user's own display name, so
+    it's treated as untrusted before landing in a generated workbook."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
 def build_servicios_prestados_workbook(
     *, rows: list[ServiceLine], label: str, year: int, month: int, centro_name: str | None, user
 ) -> Workbook:
@@ -34,11 +45,11 @@ def build_servicios_prestados_workbook(
     ws.title = "Servicios prestados"
 
     ws.append(["Servicios prestados"])
-    ws.append([label])
+    ws.append([_sanitize_cell(label)])
     ws.append([month_label(year, month)])
-    ws.append([centro_name or "Todos"])
+    ws.append([_sanitize_cell(centro_name or "Todos")])
     who = getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "")
-    ws.append([f"Generado {timezone.now():%Y-%m-%d %H:%M} por {who}"])
+    ws.append([_sanitize_cell(f"Generado {timezone.now():%Y-%m-%d %H:%M} por {who}")])
     ws.append([])
 
     header_row = ws.max_row + 1
@@ -49,7 +60,7 @@ def build_servicios_prestados_workbook(
 
     total_valor = 0
     for row in rows:
-        ws.append([row.cant, row.name, float(row.precio), float(row.valor)])
+        ws.append([row.cant, _sanitize_cell(row.name), float(row.precio), float(row.valor)])
         for cell in ws[ws.max_row]:
             if cell.column_letter in ("C", "D"):
                 cell.number_format = MONEY_FORMAT

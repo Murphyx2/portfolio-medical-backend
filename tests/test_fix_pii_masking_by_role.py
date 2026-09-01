@@ -4,6 +4,7 @@ ADMIN, DOCTOR, NURSE and RECEPTIONIST must see full phone/address/email.
 IT and CENTER_MANAGER must see masked values (e.g. "80••••00", "jo••••om").
 """
 
+from apps.communications.models import Delivery, Message
 from apps.patients.models import Patient
 
 MASK = "••••"
@@ -81,3 +82,46 @@ def test_nurse_sees_full_pii(auth_client, nurse_user):
 def test_admin_sees_full_pii(auth_client, admin_user):
     patient = _make_patient()
     _full(patient.id, auth_client, admin_user)
+
+
+def _make_delivery(patient, created_by):
+    # DeliveryViewSet.get_queryset() scopes non-admin/CM users to
+    # message__created_by=user, so the requesting user must own the message.
+    message = Message.objects.create(
+        channel=Message.Channel.WHATSAPP,
+        audience=Message.Audience.PATIENT,
+        kind=Message.Kind.CITA_RECORDATORIO,
+        created_by=created_by,
+    )
+    return Delivery.objects.create(message=message, patient=patient)
+
+
+def test_it_sees_masked_delivery_patient_name(auth_client, it_user):
+    # Regression for the audit finding: DeliverySerializer.get_patient_name
+    # bypassed apply_masking/is_masked_role entirely (unlike every other
+    # patient-PII serializer), showing IT the patient's real name.
+    patient = _make_patient()
+    delivery = _make_delivery(patient, it_user)
+    res = auth_client(it_user).get(f"/api/communications/deliveries/{delivery.id}/")
+    assert res.status_code == 200, res.data
+    assert res.data["patient_name"] != patient.full_name
+    assert MASK in res.data["patient_name"]
+
+
+def test_center_manager_sees_full_delivery_patient_name(auth_client, make_user):
+    # CENTER_MANAGER is not a masked role (apps/core/services/roles.py::is_masked_role)
+    # -- only IT is masked -- so this must stay unmasked, unlike IT above.
+    cm_user = make_user("cm2", "CENTER_MANAGER")
+    patient = _make_patient()
+    delivery = _make_delivery(patient, cm_user)
+    res = auth_client(cm_user).get(f"/api/communications/deliveries/{delivery.id}/")
+    assert res.status_code == 200, res.data
+    assert res.data["patient_name"] == patient.full_name
+
+
+def test_receptionist_sees_full_delivery_patient_name(auth_client, receptionist_user):
+    patient = _make_patient()
+    delivery = _make_delivery(patient, receptionist_user)
+    res = auth_client(receptionist_user).get(f"/api/communications/deliveries/{delivery.id}/")
+    assert res.status_code == 200, res.data
+    assert res.data["patient_name"] == patient.full_name

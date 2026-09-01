@@ -6,6 +6,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
 from apps.core.models import AuditLog
 from apps.doctors.models import DoctorProfile
+from apps.core.services.search import patient_ids_matching_digits
 from apps.patients.models import Patient, PatientGuardian
 from apps.records.models import MedicalRecord
 
@@ -285,6 +286,23 @@ def test_doctor_patient_list_no_duplicate_rows_across_multiple_guardians(
     assert res.data["count"] == 1
     ids = [r["id"] for r in res.data["results"]]
     assert ids.count(patient.id) == 1
+
+
+def test_patient_ids_matching_digits_dedupes_multiple_matching_guardians(db):
+    # Regression: patient_ids_matching_digits(include_guardian=True) must
+    # yield exactly one id even when several guardians on the same patient
+    # match the search term (the .distinct() call must not be silently
+    # defeated by Patient's default ordering leaking into the SELECT list --
+    # same bug class already fixed once in
+    # reportes/services/engine.py::distinct_ars_program_slices).
+    patient = Patient.objects.create(first_name="Ana", last_name="Perez")
+    for i in range(3):
+        PatientGuardian.objects.create(
+            patient=patient, first_name=f"G{i}", last_name="X", cedula="00112223334"
+        )
+
+    ids = list(patient_ids_matching_digits("00112223334", include_guardian=True))
+    assert ids == [patient.id]
 
 
 def test_allergies_and_critical_conditions_encrypted_at_rest(auth_client, receptionist_user):

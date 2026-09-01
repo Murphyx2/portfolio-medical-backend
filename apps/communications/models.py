@@ -21,7 +21,7 @@ class CommunicationsSettings(models.Model):
     # secrets/PII in this codebase (apps.core.fields.EncryptedCharField).
     whatsapp_access_token = EncryptedCharField(max_length=512, blank=True, default="")
     whatsapp_app_secret = EncryptedCharField(max_length=512, blank=True, default="")
-    whatsapp_verify_token = models.CharField(max_length=255, blank=True, default="")
+    whatsapp_verify_token = EncryptedCharField(max_length=512, blank=True, default="")
     whatsapp_default_country_code = models.CharField(max_length=5, default="+1")
     whatsapp_reminder_hours = models.PositiveIntegerField(default=24)
     whatsapp_master_enabled = models.BooleanField(default=False)
