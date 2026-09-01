@@ -165,7 +165,7 @@ def test_engine_counts_only_completed_encounters(admin_user):
     patient = _patient(ars=None)
     service = _service(co_pago="500.00")
     service_type, _ = ServiceType.objects.get_or_create(name="CONSULTA")
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
 
     _completed_encounter(
         patient=patient, center=center, created_by=admin_user, completed_at=now, service=service, quantity=2
@@ -201,7 +201,7 @@ def test_engine_falls_back_to_created_at_when_completed_at_is_null(admin_user):
     )
     EncounterService.objects.create(encounter=encounter, service=service, quantity=1)
     encounter.refresh_from_db()
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
 
     rows = servicios_prestados_rows(
         year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
@@ -224,7 +224,7 @@ def test_engine_groups_by_ars_and_programa(admin_user):
     covered_patient = _patient(ars=ars, ars_program=programa, cedula="00300000003")
     uncovered_patient = _patient(ars=None, cedula="00400000004")
     service = _service()
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     _completed_encounter(
         patient=covered_patient, center=center, created_by=admin_user, completed_at=now, service=service
     )
@@ -253,7 +253,7 @@ def test_pack_skips_empty_slices_and_names_files(admin_user):
     programa = _program(ars, "SENASA Contigo")
     patient = _patient(ars=ars, ars_program=programa, cedula="00200000002")
     service = _service()
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     _completed_encounter(
         patient=patient, center=center, created_by=admin_user, completed_at=now, service=service
     )
@@ -279,7 +279,7 @@ def test_pack_collapses_multiple_patients_sharing_the_same_slice(admin_user):
     programa = _program(ars, "SENASA Contigo")
     service_a = _service(name="Consulta A")
     service_b = _service(name="Consulta B", simon="654321")
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     patient_1 = _patient(ars=ars, ars_program=programa, cedula="00500000005")
     patient_2 = _patient(ars=ars, ars_program=programa, cedula="00600000006")
     _completed_encounter(
@@ -307,7 +307,7 @@ def test_pack_automatically_includes_a_brand_new_ars_with_no_code_change(admin_u
     new_ars = ARS.objects.create(ars_id="ZZ", name="ARS Nueva De Prueba")
     new_program = ARSProgram.objects.create(ars=new_ars, name="Programa Nuevo")
     service = _service()
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
 
     patient_with_program = _patient(ars=new_ars, ars_program=new_program, cedula="00700000007")
     patient_without_program = _patient(ars=new_ars, ars_program=None, cedula="00800000008")
@@ -338,7 +338,7 @@ def test_generate_writes_audit_log(auth_client, admin_user):
     center = _center()
     patient = _patient(center=center, ars=None)
     service = _service()
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     _completed_encounter(
         patient=patient, center=center, created_by=admin_user, completed_at=now, service=service
     )

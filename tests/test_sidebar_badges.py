@@ -48,6 +48,19 @@ def _appointment(patient, doctor, created_by, **overrides):
     return Appointment.objects.create(**data)
 
 
+def _later_today(now, fraction):
+    """A `now`-relative instant guaranteed to still land within today's
+    local (server TIME_ZONE) calendar day -- `now + timedelta(hours=N)`
+    flakes whenever the suite happens to run within N hours of local
+    midnight (e.g. 02:24 UTC is already 22:24 the previous day in
+    America/Santo_Domingo, UTC-4), since today_remaining_count's "today"
+    is local-day-scoped (see AppointmentViewSet.today_remaining_count).
+    `fraction` (0-1) picks a point between `now` and local end-of-day."""
+    local_now = timezone.localtime(now)
+    local_eod = local_now.replace(hour=23, minute=59, second=0, microsecond=0)
+    return now + (local_eod - local_now) * fraction
+
+
 # ---------------------------------------------------------------------------
 # today_remaining_count
 # ---------------------------------------------------------------------------
@@ -64,10 +77,10 @@ def test_today_remaining_count_includes_only_scheduled_and_confirmed(
 ):
     doctor = _doctor(doctor_user)
     now = timezone.now()
-    _appointment(_patient(cedula="00100000001"), doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=now + timedelta(hours=1))
-    _appointment(_patient(cedula="00100000002"), doctor, receptionist_user, status=Appointment.Status.CONFIRMED, date_time=now + timedelta(hours=2))
-    _appointment(_patient(cedula="00100000003"), doctor, receptionist_user, status=Appointment.Status.COMPLETED, date_time=now + timedelta(hours=3))
-    _appointment(_patient(cedula="00100000004"), doctor, receptionist_user, status=Appointment.Status.CANCELLED, date_time=now + timedelta(hours=4))
+    _appointment(_patient(cedula="00100000001"), doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=_later_today(now, 0.2))
+    _appointment(_patient(cedula="00100000002"), doctor, receptionist_user, status=Appointment.Status.CONFIRMED, date_time=_later_today(now, 0.4))
+    _appointment(_patient(cedula="00100000003"), doctor, receptionist_user, status=Appointment.Status.COMPLETED, date_time=_later_today(now, 0.6))
+    _appointment(_patient(cedula="00100000004"), doctor, receptionist_user, status=Appointment.Status.CANCELLED, date_time=_later_today(now, 0.8))
 
     res = auth_client(receptionist_user).get("/api/appointments/today_remaining_count/")
     assert res.status_code == 200
@@ -96,8 +109,8 @@ def test_today_remaining_count_scoped_to_doctor(auth_client, doctor_user, make_u
     DoctorCenterBinding.objects.create(doctor=doctor, center=center, approved=True)
 
     now = timezone.now()
-    _appointment(_patient(cedula="00100000007"), doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=now + timedelta(hours=1))
-    _appointment(_patient(cedula="00100000008"), other_doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=now + timedelta(hours=1))
+    _appointment(_patient(cedula="00100000007"), doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=_later_today(now, 0.3))
+    _appointment(_patient(cedula="00100000008"), other_doctor, receptionist_user, status=Appointment.Status.SCHEDULED, date_time=_later_today(now, 0.3))
 
     res = auth_client(doctor_user).get("/api/appointments/today_remaining_count/")
     assert res.status_code == 200
