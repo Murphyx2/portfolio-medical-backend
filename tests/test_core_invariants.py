@@ -445,8 +445,14 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
 
 
 def test_ready_for_active_requires_room(doctor_user):
+    from apps.services.models import Service
+
     patient = _make_patient()
     encounter = _make_encounter(patient, doctor_user)
+    service = Service.objects.create(
+        simon="100010", name="Ready room test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service)
     errors = encounter.ready_for_active()
     assert "A room is required to admit this encounter." in errors
 
@@ -454,15 +460,20 @@ def test_ready_for_active_requires_room(doctor_user):
 def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
     # Diagnosis capture was removed from the admission flow entirely --
     # ready_for_active() never checks for a diagnosis at all.
+    from apps.services.models import Service
+
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
     encounter = _make_encounter(
         patient,
         doctor_user,
-        room=room,
         service_type=_make_service_type(name="Needs Dx"),
     )
+    service = Service.objects.create(
+        simon="100011", name="Ready no dx test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, room=room)
     assert encounter.ready_for_active() == []
 
 
@@ -626,9 +637,15 @@ def test_patient_search_filter_unmasked_role_filters_by_name(receptionist_user):
 def test_encounter_search_filter_masked_role_restricted_to_doctor_code_and_number(
     it_user, doctor_user
 ):
+    from apps.services.models import Service
+
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=doctor)
+    encounter = _make_encounter(patient, doctor_user)
+    service = Service.objects.create(
+        simon="100020", name="Search filter test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, doctor=doctor)
 
     # Masked role: patient-name term finds nothing (name search withheld).
     request = _search_request(it_user, patient.first_name)
@@ -833,24 +850,38 @@ def test_program_belongs_to_ars_mismatched(db):
 # ---------------------------------------------------------------------------
 
 
+def _encounter_with_doctor(patient, created_by, doctor):
+    """is_owner_doctor test helper: an encounter with one service line
+    assigned to `doctor` (ownership now lives on the service line, not on
+    Encounter itself)."""
+    from apps.services.models import Service
+
+    encounter = _make_encounter(patient, created_by)
+    service = Service.objects.create(
+        simon="100021", name="Owner doctor test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, doctor=doctor)
+    return encounter
+
+
 def test_is_owner_doctor_non_doctor_always_true(admin_user, doctor_user):
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    appointment = _make_encounter(patient, doctor_user, doctor=doctor)
-    assert is_owner_doctor(admin_user, appointment) is True
+    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
+    assert is_owner_doctor(admin_user, encounter) is True
 
 
 def test_is_owner_doctor_owning_doctor_true(doctor_user):
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=doctor)
+    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
     assert is_owner_doctor(doctor_user, encounter) is True
 
 
 def test_is_owner_doctor_foreign_doctor_false(doctor_user, admin_user):
     other_user_doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=other_user_doctor)
+    encounter = _encounter_with_doctor(patient, doctor_user, other_user_doctor)
 
     from apps.accounts.models import User
 

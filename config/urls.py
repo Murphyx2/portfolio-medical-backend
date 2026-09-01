@@ -20,6 +20,8 @@ urlpatterns = [
     path("api/", include("apps.rooms.urls")),
     path("api/", include("apps.encounters.urls")),
     path("api/", include("apps.systemsettings.urls")),
+    path("api/", include("apps.communications.urls")),
+    path("api/", include("apps.reportes.urls")),
     path("api/health/", lambda request: JsonResponse({"status": "ok"}), name="health"),
     path("api/schema/", CachedSpectacularAPIView.as_view(), name="schema"),
     path(

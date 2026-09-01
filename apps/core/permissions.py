@@ -23,10 +23,19 @@ def is_staff_role(user) -> bool:
 
 
 def is_owner_doctor(user, obj) -> bool:
-    """True unless `user` is a doctor who doesn't own `obj.doctor` --
-    previously copy-pasted identically across CanDeleteAppointments,
-    CanManageAppointments, and CanManageEncounters."""
-    return not (getattr(user, "is_doctor", False) and obj.doctor.user_id != user.id)
+    """True unless `user` is a doctor who doesn't own `obj` -- previously
+    copy-pasted identically across CanDeleteAppointments,
+    CanManageAppointments, and CanManageEncounters.
+
+    Objects with a single `doctor` FK (Appointment) compare it directly.
+    Encounter has no `doctor` of its own anymore -- coverage moved to a
+    per-service-line `EncounterService.doctor` -- so ownership there means
+    "assigned to at least one of this encounter's service lines"."""
+    if not getattr(user, "is_doctor", False):
+        return True
+    if hasattr(obj, "services"):
+        return obj.services.filter(doctor__user_id=user.id).exists()
+    return obj.doctor.user_id == user.id
 
 
 class RoleUnionPermission(BasePermission):
@@ -375,6 +384,44 @@ class CanManageEncounters(BasePermission):
         if not getattr(request.user, "is_admin", False) and obj.is_locked_for_edit():
             return False
         return True
+
+
+class CanSendStaffEmail(RoleUnionPermission):
+    """Comunicaciones (apps.communications): only Admin/Doctor may compose a
+    staff email (Nurse/Receptionist/IT cannot). Whether the message may use
+    kind=ALERTA/priority=ALERTA (Admin-only) is enforced in
+    MessageSerializer.validate(), not here -- that's a field-level rule this
+    method-wide permission class can't express."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
+
+
+class CanSendManualReminder(RoleUnionPermission):
+    """Comunicaciones: manual 'Enviar recordatorio WhatsApp' on an
+    appointment -- same role set as CanCancelAppointment."""
+
+    allowed_roles = (
+        User.Role.DOCTOR,
+        User.Role.NURSE,
+        User.Role.RECEPTIONIST,
+        User.Role.ADMIN,
+        User.Role.CENTER_MANAGER,
+    )
+
+
+class IsReportesViewer(RoleUnionPermission):
+    """Reportes page + Generar: TI/Admin (any center) and Gerente de centro
+    (own center only -- enforced in the view, not here, since it's an
+    object/param-level scope, not a role gate)."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.IT, User.Role.CENTER_MANAGER)
+
+
+class IsReportesEditor(RoleUnionPermission):
+    """Create/edit/deactivate report and pack definitions: TI/Admin only --
+    Gerente de centro may generate but not author definitions."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.IT)
 
 
 class PatientDataPermission(BasePermission):
