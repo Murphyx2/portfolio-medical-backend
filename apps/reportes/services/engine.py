@@ -10,7 +10,7 @@ queryset is simpler to test and maintain.
 from dataclasses import dataclass
 
 from django.db import connection, transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 
 from apps.encounters.models import Encounter, EncounterService
@@ -60,10 +60,15 @@ def _base_queryset(*, year: int, month: int, centro_id: int | None):
 
 
 def _apply_slice(qs, *, ars_id: int | None, programa_id: int | None):
-    qs = qs.filter(encounter__patient__ars_id=ars_id)
+    """Slice by the coverage actually billed for each line: a service marked
+    ``ars_covered=False`` always falls into the Particular slice (ars_id is
+    None), regardless of the encounter's ARS -- see EncounterService.ars_covered."""
     if ars_id is None:
-        return qs.filter(encounter__patient__ars_program_id__isnull=True)
-    return qs.filter(encounter__patient__ars_program_id=programa_id)
+        return qs.filter(Q(ars_covered=False) | Q(encounter__ars_id__isnull=True))
+    qs = qs.filter(ars_covered=True, encounter__ars_id=ars_id)
+    if programa_id is None:
+        return qs.filter(encounter__ars_program_id__isnull=True)
+    return qs.filter(encounter__ars_program_id=programa_id)
 
 
 def _set_read_only_timeout():
@@ -109,22 +114,30 @@ def distinct_ars_program_slices(
 ) -> list[tuple]:
     """Distinct (ars, ars_program) pairs -- as model instances, not just
     ids, so the caller can build the display label without a second
-    lookup -- among COMPLETED encounters with a service line that month."""
+    lookup -- among COMPLETED encounters with a service line that month.
+
+    The effective slice is derived per-line, not per-encounter: a line with
+    ars_covered=False always normalizes to the Particular slice (None, None)
+    regardless of the encounter's own ARS -- see _apply_slice."""
     qs = _base_queryset(year=year, month=month, centro_id=centro_id)
-    pairs = (
+    triples = (
         # .order_by() clears EncounterService's default `ordering = ["id"]"
         # -- left in place, Django keeps `id` in the query's ORDER BY/SELECT
-        # alongside the two values_list() columns, which makes every row
+        # alongside the values_list() columns, which makes every row
         # "distinct" (id always differs) instead of collapsing by
         # (ars_id, ars_program_id) as intended.
         qs.order_by()
-        .values_list("encounter__patient__ars_id", "encounter__patient__ars_program_id")
+        .values_list("encounter__ars_id", "encounter__ars_program_id", "ars_covered")
         .distinct()
     )
     from apps.ars.models import ARS, ARSProgram
 
     ars_cache = {a.id: a for a in ARS.all_objects.all()}
     program_cache = {p.id: p for p in ARSProgram.all_objects.all()}
+    pairs = {
+        (ars_id, programa_id) if ars_covered else (None, None)
+        for ars_id, programa_id, ars_covered in triples
+    }
     return [
         (ars_cache.get(ars_id), program_cache.get(programa_id))
         for ars_id, programa_id in pairs

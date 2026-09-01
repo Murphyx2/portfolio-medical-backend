@@ -64,7 +64,10 @@ def _service(**overrides):
     return Service.objects.create(**data)
 
 
-def _completed_encounter(*, patient, center, created_by, completed_at, service, quantity=1):
+def _completed_encounter(
+    *, patient, center, created_by, completed_at, service, quantity=1,
+    ars=None, ars_program=None, ars_covered=True,
+):
     service_type, _ = ServiceType.objects.get_or_create(name="CONSULTA")
     encounter = Encounter.objects.create(
         service_type=service_type,
@@ -73,9 +76,12 @@ def _completed_encounter(*, patient, center, created_by, completed_at, service, 
         status=Encounter.Status.COMPLETED,
         completed_at=completed_at,
         created_by=created_by,
+        ars=ars,
+        ars_program=ars_program,
     )
     EncounterService.objects.create(
-        encounter=encounter, service=service, quantity=quantity, status=EncounterService.Status.COMPLETED
+        encounter=encounter, service=service, quantity=quantity,
+        status=EncounterService.Status.COMPLETED, ars_covered=ars_covered,
     )
     return encounter
 
@@ -226,7 +232,8 @@ def test_engine_groups_by_ars_and_programa(admin_user):
     service = _service()
     now = timezone.localtime(timezone.now())
     _completed_encounter(
-        patient=covered_patient, center=center, created_by=admin_user, completed_at=now, service=service
+        patient=covered_patient, center=center, created_by=admin_user, completed_at=now, service=service,
+        ars=ars, ars_program=programa,
     )
     _completed_encounter(
         patient=uncovered_patient, center=center, created_by=admin_user, completed_at=now, service=service
@@ -242,6 +249,56 @@ def test_engine_groups_by_ars_and_programa(admin_user):
     assert len(uncovered_rows) == 1
 
 
+def test_engine_uses_per_service_ars_covered_flag(admin_user):
+    # One ARS-bound encounter, two service lines: one billed under the ARS,
+    # one explicitly marked ars_covered=False (e.g. Rayos X not covered even
+    # though Medicina familiar is). The uncovered line must fall into
+    # Particular, not the patient's/encounter's ARS slice.
+    center = _center()
+    ars = _ars("SENASA")
+    programa = _program(ars, "SENASA Contigo")
+    patient = _patient(ars=ars, ars_program=programa, cedula="00900000009")
+    covered_service = _service(name="Medicina familiar")
+    uncovered_service = _service(name="Rayos X", simon="999999")
+    now = timezone.localtime(timezone.now())
+
+    encounter = _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=now,
+        service=covered_service, ars=ars, ars_program=programa,
+    )
+    EncounterService.objects.create(
+        encounter=encounter, service=uncovered_service, quantity=1,
+        status=EncounterService.Status.COMPLETED, ars_covered=False,
+    )
+
+    covered_rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=ars.id, programa_id=programa.id, centro_id=center.id
+    )
+    particular_rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert [row.name for row in covered_rows] == ["MEDICINA FAMILIAR"]
+    assert [row.name for row in particular_rows] == ["RAYOS X"]
+
+
+def test_engine_encounter_without_ars_is_particular_regardless_of_ars_covered(admin_user):
+    # An encounter with no ARS at all must land fully in Particular, even if
+    # its lines are (harmlessly) marked ars_covered=True.
+    center = _center()
+    patient = _patient(ars=None, cedula="01000000010")
+    service = _service()
+    now = timezone.localtime(timezone.now())
+    _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=now, service=service,
+        ars_covered=True,
+    )
+
+    particular_rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(particular_rows) == 1
+
+
 # ---------------------------------------------------------------------------
 # Pack: skips empty slices, one xlsx per non-empty ARS x Programa
 # ---------------------------------------------------------------------------
@@ -255,7 +312,8 @@ def test_pack_skips_empty_slices_and_names_files(admin_user):
     service = _service()
     now = timezone.localtime(timezone.now())
     _completed_encounter(
-        patient=patient, center=center, created_by=admin_user, completed_at=now, service=service
+        patient=patient, center=center, created_by=admin_user, completed_at=now, service=service,
+        ars=ars, ars_program=programa,
     )
 
     zip_bytes = build_pack_zip(
@@ -283,10 +341,12 @@ def test_pack_collapses_multiple_patients_sharing_the_same_slice(admin_user):
     patient_1 = _patient(ars=ars, ars_program=programa, cedula="00500000005")
     patient_2 = _patient(ars=ars, ars_program=programa, cedula="00600000006")
     _completed_encounter(
-        patient=patient_1, center=center, created_by=admin_user, completed_at=now, service=service_a
+        patient=patient_1, center=center, created_by=admin_user, completed_at=now, service=service_a,
+        ars=ars, ars_program=programa,
     )
     _completed_encounter(
-        patient=patient_2, center=center, created_by=admin_user, completed_at=now, service=service_b
+        patient=patient_2, center=center, created_by=admin_user, completed_at=now, service=service_b,
+        ars=ars, ars_program=programa,
     )
 
     zip_bytes = build_pack_zip(
@@ -312,10 +372,12 @@ def test_pack_automatically_includes_a_brand_new_ars_with_no_code_change(admin_u
     patient_with_program = _patient(ars=new_ars, ars_program=new_program, cedula="00700000007")
     patient_without_program = _patient(ars=new_ars, ars_program=None, cedula="00800000008")
     _completed_encounter(
-        patient=patient_with_program, center=center, created_by=admin_user, completed_at=now, service=service
+        patient=patient_with_program, center=center, created_by=admin_user, completed_at=now, service=service,
+        ars=new_ars, ars_program=new_program,
     )
     _completed_encounter(
-        patient=patient_without_program, center=center, created_by=admin_user, completed_at=now, service=service
+        patient=patient_without_program, center=center, created_by=admin_user, completed_at=now, service=service,
+        ars=new_ars,
     )
 
     zip_bytes = build_pack_zip(
