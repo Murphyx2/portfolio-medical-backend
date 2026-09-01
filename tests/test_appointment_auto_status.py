@@ -55,6 +55,18 @@ def _service_type():
     return ServiceType.objects.get_or_create(name="CONSULTA GENERAL", defaults={"requires_doctor": False})[0]
 
 
+def _service(service_type):
+    return Service.objects.create(
+        simon="100021", name="Auto-status test service", type=service_type, co_pago=0, privado=0,
+    )
+
+
+def _encounter_with_doctor_room(patient, doctor, room, created_by, service_type):
+    encounter = Encounter.objects.create(service_type=service_type, patient=patient, created_by=created_by)
+    encounter.services.create(service=_service(service_type), doctor=doctor, room=room)
+    return encounter
+
+
 def _appointment(patient, doctor, receptionist_user, **overrides):
     data = {
         "patient": patient,
@@ -78,9 +90,7 @@ def test_admit_completes_todays_scheduled_appointment(auth_client, admin_user, d
     room = _room(center)
     patient = _patient()
     appt = _appointment(patient, doctor, receptionist_user, status=Appointment.Status.SCHEDULED)
-    encounter = Encounter.objects.create(
-        service_type=_service_type(), patient=patient, doctor=doctor, room=room, created_by=admin_user,
-    )
+    encounter = _encounter_with_doctor_room(patient, doctor, room, admin_user, _service_type())
     res = auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
     assert res.status_code == 200, res.data
     appt.refresh_from_db()
@@ -93,9 +103,7 @@ def test_admit_completes_todays_confirmed_appointment(auth_client, admin_user, d
     room = _room(center)
     patient = _patient()
     appt = _appointment(patient, doctor, receptionist_user, status=Appointment.Status.CONFIRMED)
-    encounter = Encounter.objects.create(
-        service_type=_service_type(), patient=patient, doctor=doctor, room=room, created_by=admin_user,
-    )
+    encounter = _encounter_with_doctor_room(patient, doctor, room, admin_user, _service_type())
     res = auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
     assert res.status_code == 200, res.data
     appt.refresh_from_db()
@@ -114,9 +122,7 @@ def test_admit_does_not_touch_appointment_on_a_different_day(
         status=Appointment.Status.SCHEDULED,
         date_time=timezone.now() + timedelta(days=2),
     )
-    encounter = Encounter.objects.create(
-        service_type=_service_type(), patient=patient, doctor=doctor, room=room, created_by=admin_user,
-    )
+    encounter = _encounter_with_doctor_room(patient, doctor, room, admin_user, _service_type())
     res = auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
     assert res.status_code == 200, res.data
     appt.refresh_from_db()
@@ -131,9 +137,7 @@ def test_admit_does_not_touch_already_closed_appointment(
     room = _room(center)
     patient = _patient()
     appt = _appointment(patient, doctor, receptionist_user, status=Appointment.Status.CANCELLED)
-    encounter = Encounter.objects.create(
-        service_type=_service_type(), patient=patient, doctor=doctor, room=room, created_by=admin_user,
-    )
+    encounter = _encounter_with_doctor_room(patient, doctor, room, admin_user, _service_type())
     res = auth_client(admin_user).post(f"/api/encounters/{encounter.id}/admit/")
     assert res.status_code == 200, res.data
     appt.refresh_from_db()

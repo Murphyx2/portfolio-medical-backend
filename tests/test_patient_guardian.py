@@ -343,7 +343,7 @@ def test_encounters_search_does_not_match_guardian_cedula(
     guardian-cedula search to PatientSearchFilter didn't leak into it."""
     from apps.doctors.models import DoctorProfile
     from apps.encounters.models import Encounter
-    from apps.services.models import ServiceType
+    from apps.services.models import Service, ServiceType
 
     create = auth_client(receptionist_user).post(
         "/api/patients/", {**_payload(), "guardians": [_guardian()]}, format="json"
@@ -353,9 +353,13 @@ def test_encounters_search_does_not_match_guardian_cedula(
         user=admin_user, license_number="LIC-GCS", contact_phone="1",
     )
     service_type = ServiceType.objects.get_or_create(name="CONSULTA GENERAL")[0]
-    Encounter.objects.create(
-        service_type=service_type, patient=patient, doctor=doctor, created_by=admin_user,
+    encounter = Encounter.objects.create(
+        service_type=service_type, patient=patient, created_by=admin_user,
     )
+    service = Service.objects.create(
+        simon="100022", name="Guardian search test service", type=service_type, co_pago=0, privado=0,
+    )
+    encounter.services.create(service=service, doctor=doctor)
 
     res = auth_client(admin_user).get("/api/encounters/?search=00112345678")
     assert res.data["count"] == 0
