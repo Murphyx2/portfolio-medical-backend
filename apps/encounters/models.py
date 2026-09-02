@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import RegexValidator
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -210,8 +210,17 @@ class EncounterService(TimestampedModel):
     # encounter's ARS -- lets one visit mix ARS-covered and particular
     # (uncovered) services instead of an all-or-nothing encounter-level flag.
     ars_covered = models.BooleanField(default=True)
-    authorization_number = models.PositiveIntegerField(
-        null=True, blank=True, validators=[MinValueValidator(1)]
+    # Digits-only string, not an integer -- authorization numbers are
+    # ARS-issued identifiers that may carry leading zeros (e.g.
+    # "00012345"), which a numeric field would silently strip.
+    authorization_number = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        validators=[RegexValidator(
+            regex=r"^\d*[1-9]\d*$",
+            message="Authorization number must contain digits only.",
+        )],
     )
 
     class Meta:

@@ -456,16 +456,16 @@ def test_service_line_authorization_number_defaults_covered(auth_client, admin_u
     payload = _payload(
         patient, doctor,
         service_type_id=service.type_id,
-        services=[{"service": service.id, "quantity": 1, "authorization_number": 12345}],
+        services=[{"service": service.id, "quantity": 1, "authorization_number": "00012345"}],
     )
     res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
     assert res.status_code == 201, res.data
     line = res.data["services"][0]
     assert line["ars_covered"] is True
-    assert line["authorization_number"] == 12345
+    assert line["authorization_number"] == "00012345"
 
 
-@pytest.mark.parametrize("bad_value", [0, -5])
+@pytest.mark.parametrize("bad_value", ["0", "000"])
 def test_service_line_authorization_number_rejects_non_positive(bad_value, auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     patient = _patient()
@@ -486,7 +486,7 @@ def test_service_line_uncovered_clears_authorization_number(auth_client, admin_u
     payload = _payload(
         patient, doctor,
         service_type_id=service.type_id,
-        services=[{"service": service.id, "quantity": 1, "ars_covered": False, "authorization_number": 999}],
+        services=[{"service": service.id, "quantity": 1, "ars_covered": False, "authorization_number": "999"}],
     )
     res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
     assert res.status_code == 201, res.data
