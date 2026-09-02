@@ -6,6 +6,7 @@ from apps.core.serializers import CoreModelSerializer, full_name_or_username
 from apps.core.services import is_own_doctor_relation, program_belongs_to_ars
 from apps.encounters.models import Encounter, EncounterDiagnosis, EncounterService
 from apps.patients.serializers import PatientSummarySerializer as _PatientSummaryBase
+from apps.services.services import resolve_line_price
 
 
 def _sync_related(manager, items, *, is_valid, build_fields):
@@ -16,14 +17,19 @@ def _sync_related(manager, items, *, is_valid, build_fields):
     deleted. ``manager`` is a related manager already scoped to the parent
     encounter (e.g. ``encounter.diagnoses``), so lookups/creates through it
     are implicitly scoped without an explicit ``encounter=`` filter.
+
+    ``build_fields(item, existing_obj)`` receives the pre-existing row (or
+    None for a new one) so callers can make update-vs-create decisions --
+    e.g. EncounterService's co_pago snapshot, which should only be
+    (re)computed on create or when the line's own service changes.
     """
     keep_ids = []
     for item in items:
         if not is_valid(item):
             continue
-        fields = build_fields(item)
         item_id = item.get("id")
         obj = manager.filter(pk=item_id).first() if item_id else None
+        fields = build_fields(item, obj)
         if obj is not None:
             for attr, value in fields.items():
                 setattr(obj, attr, value)
@@ -220,7 +226,7 @@ class EncounterSerializer(CoreModelSerializer):
             encounter.diagnoses,
             diagnoses,
             is_valid=lambda item: bool((item.get("description") or "").strip()),
-            build_fields=lambda item: {
+            build_fields=lambda item, obj: {
                 "description": (item.get("description") or "").strip(),
                 "is_primary": item.get("is_primary", False),
             },
@@ -228,20 +234,34 @@ class EncounterSerializer(CoreModelSerializer):
 
     @staticmethod
     def _set_services(encounter, services):
-        _sync_related(
-            encounter.services,
-            services,
-            is_valid=lambda item: item.get("service") is not None,
-            build_fields=lambda item: {
-                "service": item.get("service"),
+        def build_fields(item, obj):
+            service = item.get("service")
+            ars_covered = item.get("ars_covered", True)
+            fields = {
+                "service": service,
                 "doctor": item.get("doctor"),
                 "room": item.get("room"),
                 "quantity": item.get("quantity", 1),
                 "notes": item.get("notes", ""),
                 "status": item.get("status", EncounterService.Status.PENDING),
-                "ars_covered": item.get("ars_covered", True),
-                "authorization_number": item.get("authorization_number") if item.get("ars_covered", True) else None,
-            },
+                "ars_covered": ars_covered,
+                "authorization_number": item.get("authorization_number") if ars_covered else None,
+            }
+            # co_pago is an immutable billing snapshot (see EncounterService.co_pago):
+            # resolve it on create, and re-resolve only if this update swaps the
+            # line's own service -- never in response to ars_covered or the parent
+            # encounter's ars/ars_program changing on an existing line.
+            if obj is None or service is not None and service.pk != obj.service_id:
+                fields["co_pago"] = resolve_line_price(
+                    service, ars_covered, encounter.ars, encounter.ars_program
+                )
+            return fields
+
+        _sync_related(
+            encounter.services,
+            services,
+            is_valid=lambda item: item.get("service") is not None,
+            build_fields=build_fields,
         )
 
     def to_representation(self, instance):

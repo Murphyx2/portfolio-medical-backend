@@ -490,7 +490,7 @@ def test_sync_related_creates_new_items(doctor_user):
         encounter.diagnoses,
         [{"description": "Flu", "is_primary": True}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -509,7 +509,7 @@ def test_sync_related_updates_matching_id_in_place(doctor_user):
         encounter.diagnoses,
         [{"id": existing.pk, "description": "Updated", "is_primary": True}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -531,7 +531,7 @@ def test_sync_related_deletes_rows_not_resubmitted(doctor_user):
         encounter.diagnoses,
         [{"id": keep.pk, "description": "Keep", "is_primary": False}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -549,7 +549,7 @@ def test_sync_related_empty_items_deletes_all_existing(doctor_user):
         encounter.diagnoses,
         [],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -567,7 +567,7 @@ def test_sync_related_invalid_items_are_skipped_entirely(doctor_user):
         encounter.diagnoses,
         [{"description": ""}],  # invalid: empty description
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -596,7 +596,7 @@ def test_sync_related_id_from_another_encounter_is_not_hijacked(doctor_user):
         encounter_b.diagnoses,
         [{"id": foreign.pk, "description": "New for B", "is_primary": False}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },

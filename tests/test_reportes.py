@@ -239,6 +239,55 @@ def test_engine_month_range_rolls_over_december_into_next_year(admin_user):
     assert rows[0].cant == 1
 
 
+def test_engine_uses_encounterservice_co_pago_snapshot_not_flat_service_price(admin_user):
+    """The engine must price each line off its own EncounterService.co_pago
+    snapshot (see apps.services.services.resolve_line_price), not the flat
+    Service.co_pago -- two lines for the same service can have been billed
+    at different resolved prices (e.g. an ARS override changed mid-period)."""
+    center = _center()
+    patient = _patient(ars=None)
+    service = _service(co_pago="500.00")
+    service_type, _ = ServiceType.objects.get_or_create(name="CONSULTA")
+    now = timezone.localtime(timezone.now())
+
+    for co_pago in (Decimal("300.00"), Decimal("400.00")):
+        encounter = Encounter.objects.create(
+            service_type=service_type, patient=patient, center=center,
+            status=Encounter.Status.COMPLETED, completed_at=now, created_by=admin_user,
+        )
+        EncounterService.objects.create(
+            encounter=encounter, service=service, quantity=1,
+            status=EncounterService.Status.COMPLETED, ars_covered=True, co_pago=co_pago,
+        )
+
+    rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(rows) == 1
+    assert rows[0].cant == 2
+    assert rows[0].valor == Decimal("700.00")
+    assert rows[0].precio == Decimal("350.00")
+
+
+def test_engine_falls_back_to_service_co_pago_when_snapshot_missing(admin_user):
+    """Rows predating the co_pago snapshot (co_pago IS NULL, e.g. missed by
+    the backfill migration) must still price off the flat Service.co_pago,
+    not silently drop out of the report or price as zero."""
+    center = _center()
+    patient = _patient(ars=None)
+    service = _service(co_pago="500.00")
+    now = timezone.localtime(timezone.now())
+
+    _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=now, service=service
+    )
+    rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(rows) == 1
+    assert rows[0].precio == Decimal("500.00")
+
+
 def test_ars_program_labels(db):
     ars = _ars("SENASA")
     programa = _program(ars, "SENASA Contigo")
