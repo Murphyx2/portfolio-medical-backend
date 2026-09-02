@@ -1,0 +1,49 @@
+{
+  "_comment": "Transcribed from Requirements/ReportPage/PricesByARSProgram/*.png (2026-09). Conflicting duplicate values within one screenshot were resolved to the highest listed price, per explicit sign-off. Sonography/imaging line items and 'Emergencia Medica' amounts were excluded -- their screenshot descriptions don't map unambiguously to one catalog Service. Add those later as new entries once the correct target Service is confirmed.",
+  "create_services": [
+    {
+      "name": "CONSULTA PROGRAMA P Y P",
+      "simon": "0000",
+      "type": "ADMISION",
+      "co_pago": "0.00",
+      "privado": "0.00",
+      "_comment": "No base Service existed for this SEMMA-program-specific consultation; co_pago/privado left at 0.00 pending a real default -- only the SEMMA + P Y P SEMMA override below is meaningful for it today."
+    }
+  ],
+  "prices": [
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "METASALUD", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE PSIQUATRIA", "ars": "METASALUD", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE NUTRICION", "ars": "METASALUD", "program": null, "co_pago": "750.00"},
+
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "RENACER", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE PSIQUATRIA", "ars": "RENACER", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE GINECOLOGIA Y OBSTETRICIA", "ars": "RENACER", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE NUTRICION", "ars": "RENACER", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE PEDIATRIA", "ars": "RENACER", "program": null, "co_pago": "750.00"},
+
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "RESERVAS", "program": null, "co_pago": "750.00"},
+
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "SEMMA", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE PSIQUATRIA", "ars": "SEMMA", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE GINECOLOGIA Y OBSTETRICIA", "ars": "SEMMA", "program": null, "co_pago": "750.00"},
+    {"service": "CONSULTA DE NUTRICION", "ars": "SEMMA", "program": null, "co_pago": "750.00"},
+    {"service": "ELECTROCARDIOGRAMA", "ars": "SEMMA", "program": null, "co_pago": "385.20"},
+    {"service": "PAPANICOLAOU SIMPLE (TOMA DE MUESTRA)", "ars": "SEMMA", "program": null, "co_pago": "350.10"},
+    {"service": "THIN PREP (CITOLOGIA LIQUIDA)", "ars": "SEMMA", "program": null, "co_pago": "936.00"},
+
+    {"service": "CONSULTA PROGRAMA P Y P", "ars": "SEMMA", "program": "P Y P SEMMA", "co_pago": "850.00"},
+
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "SENASA", "program": "Plan Pensionados y Jubilados", "co_pago": "500.00"},
+    {"service": "CONSULTA DE PEDIATRIA", "ars": "SENASA", "program": "Plan Pensionados y Jubilados", "co_pago": "500.00"},
+    {"service": "CONSULTA DE NUTRICION", "ars": "SENASA", "program": "Plan Pensionados y Jubilados", "co_pago": "500.00"},
+
+    {"service": "CONSULTA DE MEDICINA FAMILIAR Y COMUNITARIA", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "650.00"},
+    {"service": "CONSULTA DE PSIQUATRIA", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "1000.00"},
+    {"service": "CONSULTA DE NUTRICION", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "650.00"},
+    {"service": "CONSULTA DE PEDIATRIA", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "650.00"},
+    {"service": "CONSULTA DE GINECOLOGIA Y OBSTETRICIA", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "650.00"},
+    {"service": "PAPANICOLAOU SIMPLE (TOMA DE MUESTRA)", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "460.80"},
+    {"service": "ELECTROCARDIOGRAMA", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "518.40"},
+    {"service": "MAPA. MONITOREO DE PRESION ARTERIAL 24 HORAS", "ars": "SENASA", "program": "SeNaSa Contributivo", "co_pago": "1284.00"}
+  ]
+}

@@ -206,6 +206,13 @@ class EncounterService(TimestampedModel):
     quantity = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Resolved once, server-side, when this line is created (see
+    # apps.services.services.resolve_line_price and
+    # EncounterSerializer._set_services) -- an immutable billing snapshot,
+    # not a live lookup: it does NOT change if the encounter's ars/ars_program
+    # is edited afterward, or if a ServicePrice/Service price changes later.
+    # Nullable so historical rows can be backfilled without a hard failure.
+    co_pago = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     # Per-service coverage: whether this line is billed under the
     # encounter's ARS -- lets one visit mix ARS-covered and particular
     # (uncovered) services instead of an all-or-nothing encounter-level flag.
