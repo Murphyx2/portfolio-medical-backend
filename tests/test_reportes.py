@@ -19,8 +19,8 @@ from apps.core.models import AuditLog
 from apps.encounters.models import Encounter, EncounterService
 from apps.patients.models import Patient
 from apps.reportes.models import ReportDefinition
-from apps.reportes.services.engine import ars_program_label, servicios_prestados_rows
-from apps.reportes.services.excel import build_pack_zip
+from apps.reportes.services.engine import ServiceLine, ars_program_label, servicios_prestados_rows
+from apps.reportes.services.excel import build_pack_zip, build_servicios_prestados_workbook
 from apps.services.models import Service, ServiceType
 
 
@@ -213,6 +213,79 @@ def test_engine_falls_back_to_created_at_when_completed_at_is_null(admin_user):
         year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
     )
     assert len(rows) == 1
+
+
+def test_engine_month_range_rolls_over_december_into_next_year(admin_user):
+    # Regression for the sargable date-range rewrite: December must bound to
+    # [Dec 1, Jan 1 of year+1), not silently exclude everything after month=12.
+    center = _center()
+    patient = _patient(ars=None)
+    service = _service()
+    dec_31 = timezone.make_aware(timezone.datetime(2026, 12, 31, 23, 0))
+    jan_1_next_year = timezone.make_aware(timezone.datetime(2027, 1, 1, 0, 30))
+
+    _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=dec_31, service=service
+    )
+    # Just past the boundary -- must NOT be counted in December's report.
+    _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=jan_1_next_year, service=service
+    )
+
+    rows = servicios_prestados_rows(
+        year=2026, month=12, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(rows) == 1
+    assert rows[0].cant == 1
+
+
+def test_engine_uses_encounterservice_co_pago_snapshot_not_flat_service_price(admin_user):
+    """The engine must price each line off its own EncounterService.co_pago
+    snapshot (see apps.services.services.resolve_line_price), not the flat
+    Service.co_pago -- two lines for the same service can have been billed
+    at different resolved prices (e.g. an ARS override changed mid-period)."""
+    center = _center()
+    patient = _patient(ars=None)
+    service = _service(co_pago="500.00")
+    service_type, _ = ServiceType.objects.get_or_create(name="CONSULTA")
+    now = timezone.localtime(timezone.now())
+
+    for co_pago in (Decimal("300.00"), Decimal("400.00")):
+        encounter = Encounter.objects.create(
+            service_type=service_type, patient=patient, center=center,
+            status=Encounter.Status.COMPLETED, completed_at=now, created_by=admin_user,
+        )
+        EncounterService.objects.create(
+            encounter=encounter, service=service, quantity=1,
+            status=EncounterService.Status.COMPLETED, ars_covered=True, co_pago=co_pago,
+        )
+
+    rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(rows) == 1
+    assert rows[0].cant == 2
+    assert rows[0].valor == Decimal("700.00")
+    assert rows[0].precio == Decimal("350.00")
+
+
+def test_engine_falls_back_to_service_co_pago_when_snapshot_missing(admin_user):
+    """Rows predating the co_pago snapshot (co_pago IS NULL, e.g. missed by
+    the backfill migration) must still price off the flat Service.co_pago,
+    not silently drop out of the report or price as zero."""
+    center = _center()
+    patient = _patient(ars=None)
+    service = _service(co_pago="500.00")
+    now = timezone.localtime(timezone.now())
+
+    _completed_encounter(
+        patient=patient, center=center, created_by=admin_user, completed_at=now, service=service
+    )
+    rows = servicios_prestados_rows(
+        year=now.year, month=now.month, ars_id=None, programa_id=None, centro_id=center.id
+    )
+    assert len(rows) == 1
+    assert rows[0].precio == Decimal("500.00")
 
 
 def test_ars_program_labels(db):
@@ -414,3 +487,26 @@ def test_generate_writes_audit_log(auth_client, admin_user):
     assert AuditLog.objects.filter(
         action=AuditLog.Action.EXPORT, target_type="ReportDefinition", target_id=definition.id
     ).exists()
+
+
+# ---------------------------------------------------------------------------
+# XLSX formula-injection sanitization
+# ---------------------------------------------------------------------------
+
+
+def test_service_name_starting_with_formula_char_is_sanitized(admin_user):
+    # A service name like "=SUM(A1:A9)" (creatable by anyone with edit rights
+    # on the Service reference list) must never land as a live formula in a
+    # generated workbook -- Excel evaluates a leading =/+/-/@ on open.
+    rows = [ServiceLine(name="=SUM(A1:A9)", cant=1, precio=Decimal("100.00"), valor=Decimal("100.00"))]
+    wb = build_servicios_prestados_workbook(
+        rows=rows, label="Particular - (sin programa)", year=2026, month=1, centro_name=None, user=admin_user
+    )
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    reloaded = load_workbook(buffer)
+    ws = reloaded.active
+    data_row = [row for row in ws.iter_rows(min_row=8, max_col=2, values_only=True) if row[0] == 1][0]
+    name_cell = data_row[1]
+    assert name_cell == "'=SUM(A1:A9)"
+    assert not str(name_cell).startswith("=SUM")

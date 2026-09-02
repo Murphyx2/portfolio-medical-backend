@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.communications.models import CommunicationsSettings, Delivery, Message, Template
+from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer, full_name_or_username
 
 
@@ -194,6 +195,15 @@ class DeliverySerializer(serializers.ModelSerializer):
 
     def get_patient_name(self, obj) -> str | None:
         return obj.patient.full_name if obj.patient else None
+
+    def to_representation(self, instance):
+        # M-style masking regression: patient_name must go through the same
+        # is_masked_role gate every other PII-bearing serializer uses (IT/
+        # CENTER_MANAGER see it redacted) -- see apps/core/masking.py.
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        return apply_masking(data, user, masked_fields=("patient_name",))
 
     def get_appointment_date(self, obj):
         return obj.appointment.date_time if obj.appointment else None

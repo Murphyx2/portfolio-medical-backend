@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import RegexValidator
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -89,6 +89,9 @@ class Encounter(TimestampedModel, SoftDeleteModel):
             models.Index(fields=["created_at"]),
             models.Index(fields=["patient", "status"]),
             models.Index(fields=["status", "created_at"]),
+            # Sized to the reportes engine's real filter shape (status +
+            # center + a completed_at range) -- see apps/reportes/services/engine.py.
+            models.Index(fields=["status", "center", "-completed_at"]),
         ]
 
     def ready_for_active(self) -> list[str]:
@@ -203,12 +206,28 @@ class EncounterService(TimestampedModel):
     quantity = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Resolved once, server-side, when this line is created (see
+    # apps.services.services.resolve_line_price and
+    # EncounterSerializer._set_services) -- an immutable billing snapshot,
+    # not a live lookup: it does NOT change if the encounter's ars/ars_program
+    # is edited afterward, or if a ServicePrice/Service price changes later.
+    # Nullable so historical rows can be backfilled without a hard failure.
+    co_pago = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     # Per-service coverage: whether this line is billed under the
     # encounter's ARS -- lets one visit mix ARS-covered and particular
     # (uncovered) services instead of an all-or-nothing encounter-level flag.
     ars_covered = models.BooleanField(default=True)
-    authorization_number = models.PositiveIntegerField(
-        null=True, blank=True, validators=[MinValueValidator(1)]
+    # Digits-only string, not an integer -- authorization numbers are
+    # ARS-issued identifiers that may carry leading zeros (e.g.
+    # "00012345"), which a numeric field would silently strip.
+    authorization_number = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        validators=[RegexValidator(
+            regex=r"^\d*[1-9]\d*$",
+            message="Authorization number must contain digits only.",
+        )],
     )
 
     class Meta:

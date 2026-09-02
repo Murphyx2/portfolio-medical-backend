@@ -8,10 +8,13 @@ queryset is simpler to test and maintain.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 
 from django.db import connection, transaction
-from django.db.models import Q, Sum
+from django.db.models import F, Q, Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from apps.encounters.models import Encounter, EncounterService
 
@@ -49,11 +52,24 @@ def ars_program_label(ars, programa) -> str:
     return f"{ars.name} - {programa.name}"
 
 
+def _month_range(year: int, month: int):
+    """Half-open [start, end) bound for the given month, as a sargable range
+    filter -- __year=/__month= forces a per-row EXTRACT() that can't use any
+    index on the underlying Coalesce()d columns."""
+    start = timezone.make_aware(datetime(year, month, 1))
+    if month == 12:
+        end = timezone.make_aware(datetime(year + 1, 1, 1))
+    else:
+        end = timezone.make_aware(datetime(year, month + 1, 1))
+    return start, end
+
+
 def _base_queryset(*, year: int, month: int, centro_id: int | None):
+    start, end = _month_range(year, month)
     qs = EncounterService.objects.filter(encounter__status=Encounter.Status.COMPLETED)
     qs = qs.annotate(
         _month_basis=Coalesce("encounter__completed_at", "encounter__created_at")
-    ).filter(_month_basis__year=year, _month_basis__month=month)
+    ).filter(_month_basis__gte=start, _month_basis__lt=end)
     if centro_id:
         qs = qs.filter(encounter__center_id=centro_id)
     return qs
@@ -93,17 +109,29 @@ def servicios_prestados_rows(
             raise ReportTooLargeError(
                 "El reporte supera el limite de 20,000 filas. Reduzca el rango."
             )
+        # co_pago is the immutable per-line snapshot resolved when the line
+        # was created (EncounterService.co_pago -- see
+        # apps.services.services.resolve_line_price); Coalesce to
+        # service__co_pago only guards rows somehow missed by the backfill
+        # migration, it's not the primary price source. Grouping by
+        # service__name (not a flat price column) and averaging valor/cant
+        # for display is required now: two lines for the same service in
+        # the same slice can carry different co_pago snapshots if a price
+        # was edited mid-period.
         grouped = (
-            qs.values("service__name", "service__co_pago")
-            .annotate(cant=Sum("quantity"))
+            qs.values("service__name")
+            .annotate(
+                cant=Sum("quantity"),
+                valor=Sum(F("quantity") * Coalesce("co_pago", "service__co_pago")),
+            )
             .order_by("service__name")
         )
         return [
             ServiceLine(
                 name=row["service__name"],
                 cant=row["cant"],
-                precio=row["service__co_pago"],
-                valor=row["cant"] * row["service__co_pago"],
+                precio=(row["valor"] / row["cant"]) if row["cant"] else Decimal("0"),
+                valor=row["valor"],
             )
             for row in grouped
         ]

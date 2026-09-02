@@ -456,16 +456,16 @@ def test_service_line_authorization_number_defaults_covered(auth_client, admin_u
     payload = _payload(
         patient, doctor,
         service_type_id=service.type_id,
-        services=[{"service": service.id, "quantity": 1, "authorization_number": 12345}],
+        services=[{"service": service.id, "quantity": 1, "authorization_number": "00012345"}],
     )
     res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
     assert res.status_code == 201, res.data
     line = res.data["services"][0]
     assert line["ars_covered"] is True
-    assert line["authorization_number"] == 12345
+    assert line["authorization_number"] == "00012345"
 
 
-@pytest.mark.parametrize("bad_value", [0, -5])
+@pytest.mark.parametrize("bad_value", ["0", "000"])
 def test_service_line_authorization_number_rejects_non_positive(bad_value, auth_client, admin_user, doctor_user):
     doctor = _doctor(doctor_user)
     patient = _patient()
@@ -486,13 +486,139 @@ def test_service_line_uncovered_clears_authorization_number(auth_client, admin_u
     payload = _payload(
         patient, doctor,
         service_type_id=service.type_id,
-        services=[{"service": service.id, "quantity": 1, "ars_covered": False, "authorization_number": 999}],
+        services=[{"service": service.id, "quantity": 1, "ars_covered": False, "authorization_number": "999"}],
     )
     res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
     assert res.status_code == 201, res.data
     line = res.data["services"][0]
     assert line["ars_covered"] is False
     assert line["authorization_number"] is None
+
+
+# ---------------------------------------------------------------------------
+# EncounterService.co_pago: resolved once, server-side, at line-creation
+# time via apps.services.services.resolve_line_price -- never exposed in the
+# API response (no Billing/Cashier module yet), and immutable afterward
+# except when the line's own service is swapped. See tests/test_services.py
+# for resolve_line_price's own tier-resolution coverage.
+# ---------------------------------------------------------------------------
+
+
+def _ars(name="Test ARS", ars_id="TA"):
+    from apps.ars.models import ARS
+
+    return ARS.objects.create(ars_id=ars_id, name=name)
+
+
+def _program(ars, name="Basico"):
+    from apps.ars.models import ARSProgram
+
+    return ARSProgram.objects.create(ars=ars, name=name)
+
+
+def test_encounter_service_line_snapshots_ars_level_price(auth_client, admin_user, doctor_user):
+    from apps.encounters.models import EncounterService
+    from apps.services.models import ServicePrice
+
+    doctor = _doctor(doctor_user)
+    ars = _ars()
+    service = _service(co_pago="500.00", privado="1500.00")
+    ServicePrice.objects.create(service=service, ars=ars, co_pago="350.00")
+    patient = _patient()
+    payload = _payload(
+        patient, doctor,
+        service_type_id=service.type_id,
+        ars=ars.id,
+        services=[{"service": service.id, "quantity": 1}],
+    )
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 201, res.data
+    line = EncounterService.objects.get(pk=res.data["services"][0]["id"])
+    assert str(line.co_pago) == "350.00"
+
+
+def test_encounter_service_line_uncovered_snapshots_privado(auth_client, admin_user, doctor_user):
+    from apps.encounters.models import EncounterService
+
+    doctor = _doctor(doctor_user)
+    ars = _ars()
+    service = _service(co_pago="500.00", privado="1500.00")
+    patient = _patient()
+    payload = _payload(
+        patient, doctor,
+        service_type_id=service.type_id,
+        ars=ars.id,
+        services=[{"service": service.id, "quantity": 1, "ars_covered": False}],
+    )
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 201, res.data
+    line = EncounterService.objects.get(pk=res.data["services"][0]["id"])
+    assert str(line.co_pago) == "1500.00"
+
+
+def test_encounter_service_line_price_locked_after_ars_change(auth_client, admin_user, doctor_user):
+    """Changing the encounter's ARS after a line exists must not retroactively
+    reprice it -- the co_pago snapshot is immutable billing history."""
+    from apps.encounters.models import EncounterService
+    from apps.services.models import ServicePrice
+
+    doctor = _doctor(doctor_user)
+    ars_a = _ars(name="Test ARS A", ars_id="TAA")
+    ars_b = _ars(name="Test ARS B", ars_id="TAB")
+    service = _service(co_pago="500.00", privado="1500.00")
+    ServicePrice.objects.create(service=service, ars=ars_a, co_pago="350.00")
+    ServicePrice.objects.create(service=service, ars=ars_b, co_pago="900.00")
+    patient = _patient()
+    payload = _payload(
+        patient, doctor,
+        service_type_id=service.type_id,
+        ars=ars_a.id,
+        services=[{"service": service.id, "quantity": 1}],
+    )
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 201, res.data
+    encounter_id = res.data["id"]
+    line_id = res.data["services"][0]["id"]
+
+    res = auth_client(admin_user).patch(
+        f"/api/encounters/{encounter_id}/",
+        {"ars": ars_b.id, "services": [{"id": line_id, "service": service.id, "quantity": 1}]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    line = EncounterService.objects.get(pk=line_id)
+    assert str(line.co_pago) == "350.00"
+
+
+def test_encounter_service_line_price_recomputed_on_service_swap(auth_client, admin_user, doctor_user):
+    from apps.encounters.models import EncounterService
+
+    doctor = _doctor(doctor_user)
+    ars = _ars()
+    service_a = _service(simon="300001", name="A", co_pago="100.00", privado="200.00")
+    service_b = _service(simon="300002", name="B", co_pago="700.00", privado="900.00")
+    patient = _patient()
+    payload = _payload(
+        patient, doctor,
+        service_type_id=service_a.type_id,
+        ars=ars.id,
+        services=[{"service": service_a.id, "quantity": 1}],
+    )
+    res = auth_client(admin_user).post("/api/encounters/", payload, format="json")
+    assert res.status_code == 201, res.data
+    encounter_id = res.data["id"]
+    line_id = res.data["services"][0]["id"]
+    line = EncounterService.objects.get(pk=line_id)
+    assert str(line.co_pago) == "100.00"
+
+    res = auth_client(admin_user).patch(
+        f"/api/encounters/{encounter_id}/",
+        {"services": [{"id": line_id, "service": service_b.id, "quantity": 1}]},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    line.refresh_from_db()
+    assert str(line.co_pago) == "700.00"
 
 
 def test_update_replaces_nested_diagnoses(auth_client, admin_user, doctor_user):
