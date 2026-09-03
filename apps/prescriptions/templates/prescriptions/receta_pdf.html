@@ -1,0 +1,150 @@
+<!-- Receta médica PDF -- structure matches Receta_Sample.png / §8:
+     letterhead box -> table header -> one block per línea -> footer box
+     (Paciente/Fecha/Próxima cita/Edad/Sexo/Firma) -> fine print. No sello/
+     Exq/CMD box (§13: doctors stamp the paper themselves) -- Firma line
+     only. Plain print-ready CSS, no external assets/fonts (system-safe
+     sans-serif only), since this is rendered standalone by WeasyPrint with
+     no base_url. -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<style>
+  @page {
+    size: Letter;
+    margin: 1.4cm 1.2cm 1.6cm 1.2cm;
+    /* Accurate per-physical-page numbering -- see pdf.py's two-pass
+       docstring for why the footer BOX below prints its own separate
+       (best-effort) "Página 1 de N" line instead of relying on this. */
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      font-size: 8pt;
+      color: #333;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "DejaVu Sans", Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    color: #10202e;
+  }
+  .letterhead {
+    border: 2px solid #1a3a6b;
+    padding: 8px 12px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .letterhead img { height: 56px; width: 56px; object-fit: contain; }
+  .letterhead .text { flex: 1; text-align: center; color: #1a3a6b; }
+  .letterhead .legal { font-size: 13pt; font-weight: bold; margin: 0; }
+  .letterhead .corto { font-size: 15pt; font-weight: bold; margin: 2px 0; }
+  .letterhead .meta { font-size: 9.5pt; margin: 2px 0; }
+  table.lineas { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+  table.lineas thead th {
+    background: #4a7fb5;
+    color: #fff;
+    text-align: left;
+    padding: 5px 8px;
+    font-size: 10pt;
+    font-weight: normal;
+  }
+  table.lineas thead th.right { text-align: right; }
+  table.lineas tbody td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #c9c9c9;
+    vertical-align: top;
+  }
+  table.lineas tbody td.right { text-align: right; white-space: nowrap; }
+  .nombre { font-weight: bold; text-transform: uppercase; }
+  .sub { margin: 2px 0 0; }
+  .footer-box {
+    border: 2px solid #1a3a6b;
+    color: #1a3a6b;
+    margin-top: 14px;
+    padding: 10px 14px;
+    display: flex;
+    gap: 16px;
+  }
+  .footer-box .datos { flex: 1; }
+  .footer-box .datos p { margin: 3px 0; }
+  .footer-box .datos .underline { display: inline-block; min-width: 160px; border-bottom: 1px solid #1a3a6b; }
+  .footer-box .firma { width: 180px; text-align: center; padding-top: 30px; }
+  .footer-box .firma .line { border-top: 1px solid #1a3a6b; margin-bottom: 4px; }
+  .fine-print {
+    margin-top: 10px;
+    padding-top: 4px;
+    border-top: 1px solid #999;
+    font-size: 8pt;
+    color: #555;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+  <div class="letterhead">
+    {% if centro.logo_data_uri %}<img src="{{ centro.logo_data_uri }}" alt="" />{% endif %}
+    <div class="text">
+      <p class="legal">{{ centro.nombre_legal }}</p>
+      {% if centro.nombre_corto %}<p class="corto">-{{ centro.nombre_corto }}-</p>{% endif %}
+      {% if centro.rnc %}<p class="meta">RNC: {{ centro.rnc }}</p>{% endif %}
+      {% if centro.address %}<p class="meta">{{ centro.address }}</p>{% endif %}
+      <p class="meta">
+        {% if centro.phones %}Tel: {{ centro.phones|join:" / " }}{% endif %}
+        {% if centro.phones and centro.emails %} &middot; {% endif %}
+        {% if centro.emails %}E-mail: {{ centro.emails|join:" / " }}{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <table class="lineas">
+    <thead>
+      <tr>
+        <th>Medicamento</th>
+        <th class="right">Concentracion</th>
+        <th class="right">Abreviacion</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for linea in lineas %}
+      <tr>
+        <td>
+          <p class="nombre">{{ linea.nombre_impreso }}</p>
+          <p class="sub">Cantidad: {{ linea.cantidad }}</p>
+          <p class="sub">Dosis: {{ linea.dosis_texto }}</p>
+        </td>
+        <td class="right">{{ linea.concentracion_valor }}</td>
+        <td class="right">
+          {{ linea.unidad }}
+          {% if linea.via %}<p class="sub">Via: {{ linea.via }}</p>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="footer-box">
+    <div class="datos">
+      <p>Paciente: <span class="underline">{{ paciente.full_name }}</span></p>
+      <p>Fecha: <span class="underline">{{ fecha|date:"d/m/Y g:i A" }}</span></p>
+      <p>Próxima cita: <span class="underline">{% if proxima_cita_at %}{{ proxima_cita_at|date:"d/m/Y g:i A" }}{% else %}—{% endif %}</span></p>
+      <p>Edad: <span class="underline">{% if paciente.edad is not None %}{{ paciente.edad }}{% else %}—{% endif %}</span>
+         &nbsp;&nbsp; Sexo: <span class="underline">{{ paciente.sexo }}</span></p>
+    </div>
+    <div class="firma">
+      <div class="line"></div>
+      <p>Firma</p>
+      <p>Página 1 de {{ pagina_total }}</p>
+    </div>
+  </div>
+
+  <div class="fine-print">
+    <span>Fecha y hora de impresion: {{ impreso_en|date:"d/m/Y g:i:s A" }}</span>
+    <span>Generado por: {{ generado_por }}</span>
+    <span>Página</span>
+  </div>
+</body>
+</html>

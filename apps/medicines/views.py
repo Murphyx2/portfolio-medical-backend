@@ -10,5 +10,5 @@ class MedicineViewSet(ReferenceDataViewSet):
     write_permission_classes = [CanManageMedicines]
     delete_permission_classes = [IsAdminOrITOrCenterManager]
     filterset_fields = ["generic_name", "commercial_name"]
-    search_fields = ["generic_name", "commercial_name", "concentration"]
+    search_fields = ["generic_name", "commercial_name", "concentration", "forma", "via_pred"]
     ordering_fields = ["generic_name", "commercial_name", "concentration"]

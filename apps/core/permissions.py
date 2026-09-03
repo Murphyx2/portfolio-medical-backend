@@ -409,6 +409,15 @@ class CanSendManualReminder(RoleUnionPermission):
     )
 
 
+class CanManageRecetas(RoleUnionPermission):
+    """Recetas médicas: only Admin/Doctor may create/update/emitir/duplicar
+    (Nurse can view -- see IsAdminDoctorOrNurse on RecetaViewSet's read side
+    -- but not write), same role set as CanSendStaffEmail
+    (RECETAS_REQUIREMENTS.md §10)."""
+
+    allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
+
+
 class IsReportesViewer(RoleUnionPermission):
     """Reportes page + Generar: TI/Admin (any center) and Gerente de centro
     (own center only -- enforced in the view, not here, since it's an

@@ -12,6 +12,11 @@ class MedicineSerializer(CoreModelSerializer):
             "generic_name",
             "commercial_name",
             "concentration",
+            "forma",
+            "via_pred",
+            "concentracion_valor",
+            "concentracion_unidad",
+            "concentracion_unidad_otro",
             "created_at",
             "active",
         ]

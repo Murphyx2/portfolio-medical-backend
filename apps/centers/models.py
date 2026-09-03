@@ -1,7 +1,18 @@
+import os
+import uuid
+
 from django.conf import settings
 from django.db import models
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
+
+
+def center_logo_upload_to(instance, filename: str) -> str:
+    # Randomize stored names: avoids enumerable URLs and user-controlled
+    # names, same convention as records.models.record_image_upload_to.
+    ext = os.path.splitext(filename)[1].lower()
+    name = f"{uuid.uuid4().hex}{ext}"
+    return f"centers/{name}"
 
 
 class MedicalCenter(TimestampedModel, SoftDeleteModel):
@@ -14,6 +25,15 @@ class MedicalCenter(TimestampedModel, SoftDeleteModel):
     # invariant-in-save() convention as User.save() stripping is_staff on
     # role change), not just at the serializer/view layer.
     is_default = models.BooleanField(default=False)
+    # Legal/billing identity fields for the prescription letterhead -- added
+    # alongside the existing phone/email (kept for backward compatibility;
+    # see MedicalCenterPhone/MedicalCenterEmail below for the repeatable
+    # replacements, mirroring DoctorPhoneNumber's relationship to
+    # DoctorProfile.contact_phone).
+    rnc = models.CharField(max_length=20, blank=True)
+    nombre_legal = models.CharField(max_length=200, blank=True)
+    nombre_corto = models.CharField(max_length=50, blank=True)
+    logo = models.ImageField(upload_to=center_logo_upload_to, null=True, blank=True)
 
     class Meta:
         ordering = ["name"]
@@ -25,6 +45,39 @@ class MedicalCenter(TimestampedModel, SoftDeleteModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class MedicalCenterPhone(models.Model):
+    """Additional phone numbers beyond the legacy `MedicalCenter.phone`
+    (kept for backward compatibility), same pattern as
+    apps.doctors.models.DoctorPhoneNumber."""
+
+    center = models.ForeignKey(MedicalCenter, on_delete=models.CASCADE, related_name="phones")
+    number = models.CharField(max_length=30)
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.center_id}:{self.number}"
+
+
+class MedicalCenterEmail(models.Model):
+    """Additional emails beyond the legacy `MedicalCenter.email` (kept for
+    backward compatibility), same pattern as MedicalCenterPhone above."""
+
+    center = models.ForeignKey(MedicalCenter, on_delete=models.CASCADE, related_name="emails")
+    email = models.EmailField()
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.center_id}:{self.email}"
 
 
 class DoctorCenterBinding(TimestampedModel, SoftDeleteModel):

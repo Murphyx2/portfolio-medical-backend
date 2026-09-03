@@ -70,8 +70,8 @@ class RecordImageSerializer(CoreModelSerializer):
 
     class Meta:
         model = RecordImage
-        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "active", "created_at"]
-        read_only_fields = ["id", "image_url", "uploaded_by", "created_at"]
+        fields = ["id", "record", "image", "image_url", "caption", "uploaded_by", "kind", "active", "created_at"]
+        read_only_fields = ["id", "image_url", "uploaded_by", "kind", "created_at"]
 
     def get_fields(self):
         fields = super().get_fields()
@@ -95,6 +95,17 @@ class RecordImageSerializer(CoreModelSerializer):
         from apps.systemsettings.services import get_settings
 
         max_mb = get_settings().max_image_upload_mb
+        # PDF branch: matched on magic bytes (defensive, same as the image
+        # branch below), not extension/content-type -- an "Archivos" upload
+        # (e.g. a scanned lab report) may legitimately be a PDF instead of an
+        # image. Additive only; the existing image path below is untouched.
+        header = value.read(5)
+        value.seek(0)
+        if header[:5] == b"%PDF-":
+            if value.size > max_mb * 1024 * 1024:
+                raise serializers.ValidationError(f"File must be smaller than {max_mb} MB.")
+            self._validated_kind = RecordImage.Kind.PDF
+            return value
         if value.size > max_mb * 1024 * 1024:
             raise serializers.ValidationError(f"Image must be smaller than {max_mb} MB.")
         ext = value.name.rsplit(".", 1)[-1].lower() if "." in value.name else ""
@@ -111,7 +122,12 @@ class RecordImageSerializer(CoreModelSerializer):
             value.seek(0)
         if format_name not in ALLOWED_IMAGE_FORMATS:
             raise serializers.ValidationError("Unsupported image format.")
+        self._validated_kind = RecordImage.Kind.IMAGE
         return value
+
+    def create(self, validated_data):
+        validated_data["kind"] = getattr(self, "_validated_kind", RecordImage.Kind.IMAGE)
+        return super().create(validated_data)
 
     def get_image_url(self, obj):
         if not obj.image:

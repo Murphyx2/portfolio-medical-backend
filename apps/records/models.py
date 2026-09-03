@@ -395,6 +395,10 @@ def record_image_upload_to(instance, filename: str) -> str:
 
 
 class RecordImage(TimestampedModel, SoftDeleteModel):
+    class Kind(models.TextChoices):
+        IMAGE = "image", "Image"
+        PDF = "pdf", "PDF"
+
     record = models.ForeignKey(
         MedicalRecord,
         on_delete=models.CASCADE,
@@ -409,6 +413,11 @@ class RecordImage(TimestampedModel, SoftDeleteModel):
         blank=True,
         related_name="uploaded_record_images",
     )
+    # Distinguishes a PDF attachment (e.g. a scanned lab report) from an
+    # actual image -- the `image` FileField itself accepts both (see
+    # RecordImageSerializer.validate_image's PDF branch); ProtectedMediaView
+    # doesn't need to know kind, it already matches on the stored path alone.
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.IMAGE)
 
     def __str__(self) -> str:
         return self.caption or self.image.name
