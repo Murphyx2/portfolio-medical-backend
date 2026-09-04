@@ -13,6 +13,7 @@ from apps.accounts.models import User
 from apps.appointments.services import check_slot_available, create_appointment
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanManageRecetas, IsAdminDoctorOrNurse
+from apps.core.services import scope_queryset
 from apps.medicines.models import Medicine
 from apps.prescriptions.models import Receta, RecetaLinea
 from apps.prescriptions.pdf import generate_receta_pdf
@@ -28,7 +29,8 @@ DEFAULT_CITA_DURATION_MINUTES = 30
 
 class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     # Read (list/retrieve/pdf) is open to anyone who can open the expediente
-    # (§10: Admin/Doctor/Nurse/CenterManager); writes -- including the
+    # (§10: Admin/Doctor/Nurse/CenterManager), further scoped by center/
+    # ownership below via get_queryset(); writes -- including the
     # emitir/duplicar business actions -- are Admin/Doctor only. `anular`
     # narrows further still (author-or-admin) via its own object-level check
     # below, since CanManageRecetas alone can't express "only the author".
@@ -47,6 +49,19 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["patient", "centro", "medico", "estado"]
     ordering_fields = ["fecha", "created_at"]
+
+    def get_queryset(self):
+        # Same scoping every other clinical resource (Records/Appointments/
+        # Encounters) already applies: a doctor sees recetas at their
+        # approved centers, plus any they personally prescribed, even
+        # centerless; non-doctor staff (Admin/Nurse) are center-agnostic
+        # per this app's existing role model, unchanged. Covers every
+        # action here (retrieve/pdf/emitir/guardar_cambios/anular/duplicar
+        # all resolve through get_object() -> this queryset), not just list.
+        return scope_queryset(
+            super().get_queryset(), self.request.user,
+            center_field="centro", owner_field="medico__user",
+        )
 
     def perform_create(self, serializer):
         self.perform_create_with_owner(serializer, "created_by")
