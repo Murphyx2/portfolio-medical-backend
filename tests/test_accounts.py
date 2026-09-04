@@ -56,6 +56,7 @@ def test_users_create_only_for_admin(auth_client, admin_user):
             "first_name": "New",
             "last_name": "Doctor",
             "role": "DOCTOR",
+            "doctor_profile": {"mode": "create"},
         },
         format="json",
     )

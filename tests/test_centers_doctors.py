@@ -17,6 +17,8 @@ def _center_payload(**overrides):
 
 def _doctor_payload(**overrides):
     data = {
+        "first_name": "Test",
+        "last_name": "Doctor",
         "license_number": "LIC-100",
         "contact_phone": "8095550102",
     }
@@ -27,6 +29,8 @@ def _doctor_payload(**overrides):
 def _create_doctor_profile(user):
     return DoctorProfile.objects.create(
         user=user,
+        first_name=user.first_name or user.username,
+        last_name=user.last_name,
         license_number=f"LIC-{user.id}",
         contact_phone="8095550000",
     )

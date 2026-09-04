@@ -311,14 +311,14 @@ def test_doctors_search_and_ordering(auth_client, admin_user, db, make_user):
     u1 = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     u2 = make_user("docB", "DOCTOR", first_name="Abe", last_name="B")
     DoctorProfile.objects.create(
-        user=u1, license_number="L1-CARDIO", contact_phone="8095550001"
+        user=u1, first_name="Zoe", last_name="A", license_number="L1-CARDIO", contact_phone="8095550001"
     )
     DoctorProfile.objects.create(
-        user=u2, license_number="L2-PEDI", contact_phone="8095550002"
+        user=u2, first_name="Abe", last_name="B", license_number="L2-PEDI", contact_phone="8095550002"
     )
     res = auth_client(admin_user).get("/api/doctors/profiles/?search=cardio")
     assert {r["license_number"] for r in res.data["results"]} == {"L1-CARDIO"}
-    res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-user__last_name")
+    res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-last_name")
     assert res.data["results"][0]["full_name"] == "Abe B"
 
 

@@ -45,6 +45,8 @@ def _center(code="C1"):
 def _doctor_profile(user):
     return DoctorProfile.objects.create(
         user=user,
+        first_name=user.first_name or user.username,
+        last_name=user.last_name,
         license_number="LIC-123",
         contact_phone="8095550000",
         contact_email="doc@example.com",
