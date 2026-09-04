@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 RATE_LIMIT_WINDOW = timedelta(hours=1)
 
+# Re-exported so callers outside this app (apps/appointments/views.py) can
+# reference the CITA_* event kinds without importing Template directly --
+# the modular-monolith convention (CLAUDE.md) is cross-app calls go through
+# this services module, not a raw model import.
+AppointmentNotificationKind = Template.Kind
+
 
 def active_whatsapp_template(kind: str) -> Template | None:
     return Template.objects.filter(

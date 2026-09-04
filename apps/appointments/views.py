@@ -9,8 +9,8 @@ from rest_framework.response import Response
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
 from apps.appointments.services import cancel_noshow_appointments
-from apps.communications.models import Template
 from apps.communications.services.appointments import (
+    AppointmentNotificationKind,
     cancel_queued_reminders,
     notify_appointment_event,
     queue_manual_reminder,
@@ -99,7 +99,7 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         appointment.cancel_reason = reason
         appointment.save(update_fields=["status", "cancel_reason"])
         self.log_action(appointment, "UPDATE", details={"status": "CANCELLED", "reason": reason})
-        notify_appointment_event(appointment, Template.Kind.CITA_CANCELADA, user=request.user)
+        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_CANCELADA, user=request.user)
         cancel_queued_reminders(appointment)
         return Response(self.get_serializer(appointment).data)
 
@@ -116,7 +116,7 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         appointment.status = Appointment.Status.CONFIRMED
         appointment.save()
         self.log_action(appointment, "UPDATE", details={"status": "CONFIRMED"})
-        notify_appointment_event(appointment, Template.Kind.CITA_CREADA, user=request.user)
+        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_CREADA, user=request.user)
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
@@ -148,7 +148,7 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         serializer.is_valid(raise_exception=True)
         serializer.save()
         self.log_action(appointment, "UPDATE", details={"date_time": serializer.data["date_time"]})
-        notify_appointment_event(appointment, Template.Kind.CITA_REAGENDADA, user=request.user)
+        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_REAGENDADA, user=request.user)
         return Response(serializer.data)
 
     @action(detail=False, methods=["get"])
