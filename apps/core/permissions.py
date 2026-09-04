@@ -133,15 +133,21 @@ class CanDeleteAppointments(RoleUnionPermission):
 
 
 class CanManageMedicines(RoleUnionPermission):
-    """Admins, IT, receptionists, and center managers (admin-equivalent) may
-    create/update medicines; delete stays IsAdminOrITOrCenterManager-only
-    (see medicines/views.py get_permissions)."""
+    """Admins, IT, receptionists, center managers (admin-equivalent), doctors,
+    and nurses may create/update medicines; delete stays
+    IsAdminOrITOrCenterManager-only (see medicines/views.py get_permissions).
+    Doctor/Nurse were added so staff can add a new medicine to the catalog
+    on the spot -- this codebase has no create-only vs. edit-only split for
+    reference data, so this also grants them edit rights on any existing
+    medicine, not just ones they create."""
 
     allowed_roles = (
         User.Role.ADMIN,
         User.Role.IT,
         User.Role.RECEPTIONIST,
         User.Role.CENTER_MANAGER,
+        User.Role.DOCTOR,
+        User.Role.NURSE,
     )
 
 
@@ -413,9 +419,26 @@ class CanManageRecetas(RoleUnionPermission):
     """Recetas médicas: only Admin/Doctor may create/update/emitir/duplicar
     (Nurse can view -- see IsAdminDoctorOrNurse on RecetaViewSet's read side
     -- but not write), same role set as CanSendStaffEmail
-    (RECETAS_REQUIREMENTS.md §10)."""
+    (RECETAS_REQUIREMENTS.md §10).
+
+    Object-level (update/partial_update/destroy only -- emitir/anular/
+    duplicar/guardar_cambios all enforce their own inline object-level rules
+    in RecetaViewSet, since none of them share this same "BORRADOR-only"
+    shape): only the receta's médico or its creator may reach the generic
+    write path, and only while it's still BORRADOR -- once EMITIDA, líneas
+    may only change through the dedicated `guardar_cambios` action (the
+    1-hour edit window), and ANULADA is terminal. Admins bypass both the
+    ownership and status checks."""
 
     allowed_roles = (User.Role.ADMIN, User.Role.DOCTOR)
+
+    def has_object_permission(self, request, view, obj):
+        if getattr(view, "action", None) not in ("update", "partial_update", "destroy"):
+            return True
+        if getattr(request.user, "is_admin", False):
+            return True
+        is_owner = obj.medico.user_id == request.user.id or obj.created_by_id == request.user.id
+        return is_owner and not obj.is_locked_for_edit()
 
 
 class IsReportesViewer(RoleUnionPermission):

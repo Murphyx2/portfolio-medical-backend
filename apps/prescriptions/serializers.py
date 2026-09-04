@@ -45,10 +45,11 @@ class RecetaSerializer(CoreModelSerializer):
             "cita",
             "estado",
             "pdf",
+            "emitida_at",
             "lineas",
             "active",
         ]
-        read_only_fields = ["id", "created_by", "pdf"]
+        read_only_fields = ["id", "created_by", "pdf", "emitida_at"]
 
     def validate_medico(self, value):
         # Mirrors AppointmentSerializer.validate_doctor/DoctorScheduleSerializer.

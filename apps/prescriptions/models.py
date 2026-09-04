@@ -1,8 +1,10 @@
 import os
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
 
@@ -58,12 +60,42 @@ class Receta(TimestampedModel, SoftDeleteModel):
     )
     estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.BORRADOR)
     pdf = models.FileField(upload_to=receta_pdf_upload_to, null=True, blank=True)
+    # Set once, in emitir() -- the moment BORRADOR -> EMITIDA actually
+    # happened, distinct from `fecha` (a user-editable "prescription date")
+    # and from `updated_at` (bumped by any save). This is the anchor the
+    # 1-hour "Guardar cambios" edit window is measured against.
+    emitida_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-fecha"]
 
     def __str__(self) -> str:
         return f"Receta #{self.pk} — {self.patient} ({self.get_estado_display()})"
+
+    def is_locked_for_edit(self) -> bool:
+        """The plain update/partial_update/destroy path (CanManageRecetas)
+        only ever touches a BORRADOR -- once EMITIDA or ANULADA, mirrors
+        Appointment/Encounter's own is_locked_for_edit() convention. An
+        EMITIDA receta can still be amended within its 1-hour window, but
+        only through the dedicated `guardar_cambios` action below, never the
+        generic endpoint."""
+        return self.estado != self.Estado.BORRADOR
+
+    def editable_by_within_window(self, user) -> bool:
+        """Gate for the `guardar_cambios` action (the 1-hour "fix a mistake
+        without anular+duplicar" window): Admins may amend any EMITIDA
+        receta at any time; the prescribing médico or the receta's creator
+        may do so only within 1 hour of `emitida_at`. Never true for
+        BORRADOR (use the plain update endpoint) or ANULADA (terminal)."""
+        if self.estado != self.Estado.EMITIDA:
+            return False
+        if getattr(user, "is_admin", False):
+            return True
+        if self.emitida_at is None:
+            return False
+        if not (self.medico.user_id == user.id or self.created_by_id == user.id):
+            return False
+        return timezone.now() - self.emitida_at <= timedelta(hours=1)
 
 
 class RecetaLinea(models.Model):

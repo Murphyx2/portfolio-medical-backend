@@ -35,7 +35,43 @@ def test_receptionist_cannot_delete_medicine(auth_client, receptionist_user):
     assert res.status_code == 403, res.data
 
 
+def test_doctor_can_create_medicine(auth_client, doctor_user):
+    res = auth_client(doctor_user).post("/api/medicines/", _payload(), format="json")
+    assert res.status_code == 201, res.data
+
+
+def test_nurse_can_create_medicine(auth_client, nurse_user):
+    res = auth_client(nurse_user).post("/api/medicines/", _payload(), format="json")
+    assert res.status_code == 201, res.data
+
+
+def test_doctor_cannot_delete_medicine(auth_client, doctor_user):
+    med = Medicine.objects.create(generic_name="A", commercial_name="B")
+    res = auth_client(doctor_user).delete(f"/api/medicines/{med.id}/")
+    assert res.status_code == 403, res.data
+
+
 def test_admin_can_delete_medicine(auth_client, admin_user):
     med = Medicine.objects.create(generic_name="A", commercial_name="B")
     res = auth_client(admin_user).delete(f"/api/medicines/{med.id}/")
     assert res.status_code == 204, res.data
+
+
+def test_create_medicine_without_legacy_concentration_field(auth_client, admin_user):
+    # Regression: the Medicamentos catalog UI stopped sending the legacy
+    # `concentration` string once concentracion_valor/concentracion_unidad
+    # shipped, but Medicine.unique_together forces DRF to require
+    # `concentration` by default regardless of the model's blank=True --
+    # this used to 400 with "concentration: Este campo es requerido."
+    res = auth_client(admin_user).post(
+        "/api/medicines/",
+        {
+            "generic_name": "Ibuprofeno",
+            "commercial_name": "Test Brand",
+            "concentracion_valor": "200",
+            "concentracion_unidad": "mg",
+        },
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+    assert res.data["concentration"] == "200mg"

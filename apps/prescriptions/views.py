@@ -16,7 +16,7 @@ from apps.core.permissions import CanManageRecetas, IsAdminDoctorOrNurse
 from apps.medicines.models import Medicine
 from apps.prescriptions.models import Receta, RecetaLinea
 from apps.prescriptions.pdf import generate_receta_pdf
-from apps.prescriptions.serializers import RecetaSerializer
+from apps.prescriptions.serializers import RecetaLineaSerializer, RecetaSerializer
 from apps.records.models import MedicalRecord, RecordImage
 from apps.services.models import Service
 
@@ -146,6 +146,7 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         pdf_bytes = generate_receta_pdf(receta)
         receta.pdf.save(f"receta_{receta.pk}.pdf", ContentFile(pdf_bytes), save=False)
         receta.estado = Receta.Estado.EMITIDA
+        receta.emitida_at = timezone.now()
         receta.save()
 
         self._attach_to_expediente(receta)
@@ -155,7 +156,7 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         )
         return Response(self.get_serializer(receta).data)
 
-    def _attach_to_expediente(self, receta):
+    def _attach_to_expediente(self, receta, *, previous_pdf_name: str | None = None):
         """§9: attach the generated PDF to the patient's expediente. This
         codebase keeps at most one *active* MedicalRecord per patient
         (uniq_active_medicalrecord_patient) -- mirrors
@@ -163,10 +164,23 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         behavior rather than inventing new expediente lifecycle rules. If a
         patient genuinely has no active record yet, the receta PDF still
         stays on the Receta itself (Ver PDF keeps working); it's just not
-        also mirrored onto Archivos."""
+        also mirrored onto Archivos.
+
+        `previous_pdf_name` is set when `guardar_cambios` regenerates an
+        already-attached PDF in place -- updates that existing Archivos row
+        instead of adding a second one for the same receta. Falls through to
+        creating a fresh row if no matching one is found (e.g. the record
+        was created/changed after the original emitir)."""
         record = MedicalRecord.objects.filter(patient=receta.patient).first()
         if record is None:
             return
+        if previous_pdf_name:
+            updated = RecordImage.objects.filter(record=record, image=previous_pdf_name).update(
+                image=receta.pdf.name,
+                caption=f"Receta {receta.fecha:%Y-%m-%d} (editada)",
+            )
+            if updated:
+                return
         # `image=receta.pdf` reuses the already-committed FieldFile's stored
         # name as-is (Django doesn't re-run record_image_upload_to for an
         # already-saved file) -- the receta PDF and the Archivos row point
@@ -179,6 +193,63 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
             uploaded_by=receta.created_by,
             kind=RecordImage.Kind.PDF,
         )
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def guardar_cambios(self, request, pk=None):
+        """Amends an already-EMITIDA receta's líneas within its 1-hour
+        window (Receta.editable_by_within_window) -- lets a doctor fix a
+        mistake without a full anular+duplicar. Re-runs the same
+        catalog-snapshot step and PDF generation `emitir` does, and replaces
+        (rather than duplicates) the existing Expediente/Archivos
+        attachment. Only líneas may change here -- patient/centro/médico/
+        fecha/estado are untouched, matching the frontend's own scope for
+        this action."""
+        receta = self.get_object()
+        if not receta.editable_by_within_window(request.user):
+            self.permission_denied(
+                request,
+                message="Esta receta ya no puede editarse (fuera de la ventana de 1 hora, o no le pertenece).",
+            )
+
+        lineas_serializer = RecetaLineaSerializer(data=request.data.get("lineas", []), many=True)
+        lineas_serializer.is_valid(raise_exception=True)
+        lineas_data = lineas_serializer.validated_data
+        if not any(
+            l.get("nombre_impreso") and l.get("cantidad") and l.get("dosis_texto") for l in lineas_data
+        ):
+            raise serializers.ValidationError(
+                {"lineas": "Se requiere al menos una línea con nombre, cantidad y dosis."}
+            )
+
+        receta.lineas.all().delete()
+        RecetaLinea.objects.bulk_create(RecetaLinea(receta=receta, **linea) for linea in lineas_data)
+        lineas = list(receta.lineas.all())
+
+        # Same snapshot-from-catalog step as emitir (§8).
+        medicamento_ids = [l.medicamento_id for l in lineas if l.medicamento_id]
+        medicines = Medicine.objects.in_bulk(medicamento_ids)
+        for linea in lineas:
+            medicamento = medicines.get(linea.medicamento_id) if linea.medicamento_id else None
+            if medicamento is None:
+                continue
+            linea.nombre_impreso = medicamento.commercial_name or medicamento.generic_name
+            linea.concentracion_valor = medicamento.concentracion_valor
+            linea.unidad = medicamento.concentracion_unidad
+            linea.via = medicamento.via_pred
+        RecetaLinea.objects.bulk_update(
+            lineas, ["nombre_impreso", "concentracion_valor", "unidad", "via"]
+        )
+
+        previous_pdf_name = receta.pdf.name if receta.pdf else None
+        pdf_bytes = generate_receta_pdf(receta)
+        receta.pdf.save(f"receta_{receta.pk}.pdf", ContentFile(pdf_bytes), save=False)
+        receta.save()
+
+        self._attach_to_expediente(receta, previous_pdf_name=previous_pdf_name)
+
+        self.log_action(receta, "UPDATE", details={"guardar_cambios": True})
+        return Response(self.get_serializer(receta).data)
 
     @action(detail=True, methods=["post"])
     def anular(self, request, pk=None):

@@ -10,6 +10,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.core.files.base import ContentFile
 from django.utils import timezone
 
 from apps.appointments.models import Appointment
@@ -18,6 +19,7 @@ from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
 from apps.prescriptions.models import Receta, RecetaLinea
+from apps.records.models import MedicalRecord, RecordImage
 from apps.services.models import Service, ServiceType
 
 
@@ -67,6 +69,33 @@ def _add_linea(receta, medicamento=None, **kwargs):
     )
     defaults.update(kwargs)
     return RecetaLinea.objects.create(receta=receta, medicamento=medicamento, **defaults)
+
+
+def _lineas_payload(nombre="Losartan LAM 2", cantidad="60"):
+    return [{
+        "nombre_impreso": nombre, "cantidad": cantidad, "dosis_texto": "1 TAB AL DIA",
+        "concentracion_valor": "50", "unidad": "mg", "via": "ORAL", "forma": "TABLETA",
+        "fuera_de_catalogo": True, "dosis_json": {}, "indicacion_extra": "",
+        "uso_continuo": False, "orden": 0,
+    }]
+
+
+@pytest.fixture
+def emitida(borrador):
+    """A BORRADOR pushed straight to EMITIDA (bypassing the emitir endpoint,
+    since these tests target guardar_cambios/permissions, not emitir itself)
+    -- carries a real stored `pdf` and a fresh `emitida_at` so the 1-hour
+    window starts "now" by default."""
+    _add_linea(borrador, nombre_impreso="Losartan LAM", cantidad="30")
+    borrador.estado = Receta.Estado.EMITIDA
+    borrador.emitida_at = timezone.now()
+    borrador.pdf.save("receta_test.pdf", ContentFile(b"%PDF-fake"), save=True)
+    return borrador
+
+
+@pytest.fixture
+def medical_record(patient, admin_user):
+    return MedicalRecord.objects.create(patient=patient, created_by=admin_user)
 
 
 # -- RBAC --------------------------------------------------------------
@@ -289,3 +318,115 @@ def test_pdf_action_streams_after_emitir(mock_pdf, auth_client, doctor_user, bor
     res = auth_client(doctor_user).get(f"/api/recetas/{borrador.id}/pdf/")
     assert res.status_code == 200
     assert res["Content-Type"] == "application/pdf"
+
+
+# -- generic update/partial_update: CanManageRecetas object-permission gap --
+
+
+def test_update_borrador_by_author_succeeds(auth_client, doctor_user, borrador):
+    res = auth_client(doctor_user).patch(
+        f"/api/recetas/{borrador.id}/", {"proxima_cita_at": None}, format="json"
+    )
+    assert res.status_code == 200, res.data
+
+
+def test_update_borrador_by_other_doctor_forbidden(auth_client, make_user, borrador):
+    from apps.accounts.models import User
+
+    other_doctor = make_user("other-doctor-update", User.Role.DOCTOR)
+    res = auth_client(other_doctor).patch(
+        f"/api/recetas/{borrador.id}/", {"proxima_cita_at": None}, format="json"
+    )
+    assert res.status_code == 403
+
+
+def test_update_emitida_via_generic_patch_forbidden_for_doctor(auth_client, doctor_user, emitida):
+    # Regression: before CanManageRecetas.has_object_permission existed, any
+    # Admin/Doctor could PATCH any receta at any status through the plain
+    # endpoint -- an EMITIDA receta must now go through guardar_cambios
+    # instead of the generic update path.
+    res = auth_client(doctor_user).patch(
+        f"/api/recetas/{emitida.id}/", {"proxima_cita_at": None}, format="json"
+    )
+    assert res.status_code == 403
+
+
+def test_update_emitida_via_generic_patch_allowed_for_admin(auth_client, admin_user, emitida):
+    res = auth_client(admin_user).patch(
+        f"/api/recetas/{emitida.id}/", {"proxima_cita_at": None}, format="json"
+    )
+    assert res.status_code == 200, res.data
+
+
+# -- guardar_cambios (1-hour edit window on an EMITIDA receta) ---------------
+
+
+@patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
+def test_guardar_cambios_within_window_by_owner_doctor_succeeds(mock_pdf, auth_client, doctor_user, emitida):
+    old_pdf_name = emitida.pdf.name
+    res = auth_client(doctor_user).post(
+        f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 200, res.data
+    emitida.refresh_from_db()
+    assert emitida.estado == Receta.Estado.EMITIDA
+    assert emitida.lineas.count() == 1
+    assert emitida.lineas.first().nombre_impreso == "Losartan LAM 2"
+    assert emitida.pdf.name != old_pdf_name
+
+
+@patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
+def test_guardar_cambios_denied_after_window(mock_pdf, auth_client, doctor_user, emitida):
+    emitida.emitida_at = timezone.now() - timedelta(hours=2)
+    emitida.save(update_fields=["emitida_at"])
+    res = auth_client(doctor_user).post(
+        f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 403
+
+
+def test_guardar_cambios_denied_for_non_owner_doctor(auth_client, make_user, emitida):
+    from apps.accounts.models import User
+
+    other_doctor = make_user("other-doctor-gc", User.Role.DOCTOR)
+    res = auth_client(other_doctor).post(
+        f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 403
+
+
+@patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
+def test_guardar_cambios_allowed_for_admin_outside_window(mock_pdf, auth_client, admin_user, emitida):
+    emitida.emitida_at = timezone.now() - timedelta(hours=5)
+    emitida.save(update_fields=["emitida_at"])
+    res = auth_client(admin_user).post(
+        f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 200, res.data
+
+
+def test_guardar_cambios_denied_for_borrador(auth_client, doctor_user, borrador):
+    _add_linea(borrador)
+    res = auth_client(doctor_user).post(
+        f"/api/recetas/{borrador.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 403
+
+
+@patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
+def test_guardar_cambios_replaces_archivos_attachment_in_place(
+    mock_pdf, auth_client, doctor_user, emitida, medical_record
+):
+    old_name = emitida.pdf.name
+    RecordImage.objects.create(
+        record=medical_record, image=old_name, caption="Receta original", kind=RecordImage.Kind.PDF,
+    )
+    res = auth_client(doctor_user).post(
+        f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
+    )
+    assert res.status_code == 200, res.data
+    emitida.refresh_from_db()
+    assert RecordImage.objects.filter(record=medical_record).count() == 1
+    updated = RecordImage.objects.get(record=medical_record)
+    assert updated.image.name == emitida.pdf.name
+    assert updated.image.name != old_name
