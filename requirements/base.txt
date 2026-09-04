@@ -13,3 +13,9 @@ Pillow>=12.3.0,<13.0
 whitenoise>=6.7,<7.0
 requests>=2.31,<3.0
 openpyxl>=3.1,<4.0
+weasyprint>=62.0,<63.0
+# WeasyPrint 62.x is incompatible with pydyf>=0.12 (pydyf restructured its
+# PDF stream base classes, breaking WeasyPrint's write_pdf() with
+# AttributeError: 'super' object has no attribute 'transform') -- pin below
+# that until a WeasyPrint release declares real pydyf>=0.12 support.
+pydyf<0.12

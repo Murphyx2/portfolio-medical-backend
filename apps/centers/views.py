@@ -6,10 +6,11 @@ from rest_framework.response import Response
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.centers.serializers import (
     DoctorCenterBindingSerializer,
+    MedicalCenterLetterheadSerializer,
     MedicalCenterSerializer,
 )
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
-from apps.core.permissions import IsAdminOrCenterManager, IsStaffUser
+from apps.core.permissions import CanManageRecetas, IsAdminOrCenterManager, IsStaffUser
 from apps.core.viewsets import ReferenceDataViewSet
 
 
@@ -27,6 +28,18 @@ class MedicalCenterViewSet(ReferenceDataViewSet):
     filterset_fields = ["name", "code"]
     search_fields = ["name", "code", "address", "phone", "email"]
     ordering_fields = ["name", "code", "address", "phone", "email", "doctor_count"]
+
+
+class MedicalCenterLetterheadViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only, non-sensitive letterhead data for the Receta composer --
+    gated to whoever may write a receta (CanManageRecetas: ADMIN/DOCTOR), not
+    to whoever may manage Centers (MedicalCenterViewSet stays admin/center-
+    manager only, per that view's own docstring)."""
+
+    queryset = MedicalCenter.objects.order_by("name")
+    serializer_class = MedicalCenterLetterheadSerializer
+    permission_classes = [CanManageRecetas]
+    pagination_class = None
 
 
 class DoctorCenterBindingViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
