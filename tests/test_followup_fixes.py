@@ -152,7 +152,9 @@ def test_demoted_admin_loses_staff_and_superuser(auth_client, admin_user, make_u
     assert victim.is_staff is True and victim.is_superuser is True
 
     res = auth_client(admin_user).patch(
-        f"/api/auth/users/{victim.id}/", {"role": "DOCTOR"}, format="json"
+        f"/api/auth/users/{victim.id}/",
+        {"role": "DOCTOR", "doctor_profile": {"mode": "create"}},
+        format="json",
     )
     assert res.status_code == 200, res.data
     victim.refresh_from_db()

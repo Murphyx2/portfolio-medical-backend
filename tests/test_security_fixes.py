@@ -297,7 +297,12 @@ def test_it_can_create_non_admin_user(auth_client, make_user):
     it = make_user("it", "IT")
     res = auth_client(it).post(
         "/api/auth/users/",
-        {"username": "newdoc", "password": "Str0ngPass123!", "role": "DOCTOR"},
+        {
+            "username": "newdoc",
+            "password": "Str0ngPass123!",
+            "role": "DOCTOR",
+            "doctor_profile": {"mode": "create"},
+        },
         format="json",
     )
     assert res.status_code == 201, res.data

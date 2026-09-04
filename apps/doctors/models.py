@@ -5,12 +5,29 @@ from apps.core.models import SoftDeleteModel, TimestampedModel
 
 
 class DoctorProfile(TimestampedModel, SoftDeleteModel):
+    # Nullable: a médico can exist without ever getting a login (see
+    # UsuarioMedico link requirements). When linked, `user.role` must be
+    # DOCTOR -- enforced in DoctorProfileSerializer.validate_user, not here.
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="doctor_profile",
+        null=True,
+        blank=True,
     )
-    license_number = models.CharField(max_length=50, unique=True)
+    # Stored independently of `user` (not derived) so a médico has a name
+    # even when unlinked. The médico is the authoritative name for a linked
+    # Doctor/a user -- sync_linked_user_name() pushes these onto User
+    # whenever they change (DoctorProfileSerializer.create/update,
+    # apps.accounts.serializers._link_or_create_doctor_profile's link mode).
+    # max_length matches User.first_name/last_name, since values sync
+    # between the two.
+    first_name = models.CharField(max_length=150, blank=True, default="")
+    last_name = models.CharField(max_length=150, blank=True, default="")
+    # Nullable (not just blank) so multiple médicos can omit it without
+    # colliding on the unique index -- Postgres allows multiple NULLs under
+    # a unique constraint but not multiple empty strings.
+    license_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     contact_phone = models.CharField(max_length=30)
     contact_email = models.EmailField(blank=True)
     bio = models.TextField(blank=True)
@@ -40,7 +57,7 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
     )
 
     class Meta:
-        ordering = ["user__last_name", "user__first_name"]
+        ordering = ["last_name", "first_name", "code"]
 
     def save(self, *args, **kwargs):
         if self.code:
@@ -56,10 +73,22 @@ class DoctorProfile(TimestampedModel, SoftDeleteModel):
 
     @property
     def full_name(self) -> str:
-        return self.user.get_full_name() or self.user.username
+        return f"{self.first_name} {self.last_name}".strip()
+
+    def sync_linked_user_name(self) -> None:
+        """Push this médico's name onto its linked User -- the médico is
+        the authoritative name for a Doctor/a login. A targeted .update()
+        (not user.save()) so it never re-runs User.save()'s staff/
+        superuser role-stripping logic."""
+        if self.user_id and (self.first_name or self.last_name):
+            from django.contrib.auth import get_user_model
+
+            get_user_model()._base_manager.filter(pk=self.user_id).update(
+                first_name=self.first_name, last_name=self.last_name
+            )
 
     def __str__(self) -> str:
-        return self.full_name
+        return self.full_name or self.code or str(self.pk)
 
 
 class DoctorPhoneNumber(models.Model):
