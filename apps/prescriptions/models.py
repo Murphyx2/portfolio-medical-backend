@@ -18,10 +18,11 @@ def receta_pdf_upload_to(instance, filename: str) -> str:
 
 
 class Receta(TimestampedModel, SoftDeleteModel):
-    """A prescription ("Receta médica"). PDF generation, the emitir/anular
-    state-transition actions, and permission wiring beyond the placeholder
-    IsAuthenticated gate on the ViewSet are a follow-up task -- this is the
-    data-model layer only (RECETAS_REQUIREMENTS.md §2-5, §11)."""
+    """A prescription ("Receta médica"), RECETAS_REQUIREMENTS.md §2-5, §11.
+    PDF generation and the emitir/anular state-transition actions live on
+    RecetaViewSet (apps/prescriptions/views.py); center/owner scoping there
+    matches every other clinical resource (Records/Appointments/Encounters)
+    via RecetaViewSet.get_queryset()."""
 
     class Estado(models.TextChoices):
         BORRADOR = "BORRADOR", "Borrador"
