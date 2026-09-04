@@ -66,7 +66,7 @@ def _build_context(receta) -> dict:
         "centro": {
             "logo_data_uri": _logo_data_uri(centro),
             "nombre_legal": centro.nombre_legal or centro.name,
-            "nombre_corto": centro.nombre_corto,
+            "nombre_corto": centro.nombre_corto or centro.code,
             "rnc": centro.rnc,
             "address": centro.address,
             "phones": phones,

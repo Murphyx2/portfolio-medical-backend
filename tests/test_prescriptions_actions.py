@@ -103,6 +103,29 @@ def test_doctor_can_create_receta(auth_client, doctor_user, centro, medico, pati
 # -- emitir --------------------------------------------------------------
 
 
+def test_doctor_cannot_create_receta_for_another_doctor(auth_client, doctor_user, make_user, centro, patient):
+    other_user = make_user(username="other-doctor", role="DOCTOR")
+    other_medico = DoctorProfile.objects.create(
+        user=other_user, license_number="LIC-2", contact_phone="555-0001"
+    )
+    res = auth_client(doctor_user).post(
+        "/api/recetas/",
+        {"patient": patient.id, "centro": centro.id, "medico": other_medico.id, "fecha": timezone.now().isoformat()},
+        format="json",
+    )
+    assert res.status_code == 400
+    assert "medico" in res.data
+
+
+def test_admin_can_create_receta_for_any_doctor(auth_client, admin_user, medico, centro, patient):
+    res = auth_client(admin_user).post(
+        "/api/recetas/",
+        {"patient": patient.id, "centro": centro.id, "medico": medico.id, "fecha": timezone.now().isoformat()},
+        format="json",
+    )
+    assert res.status_code == 201, res.data
+
+
 def test_emitir_requires_at_least_one_valid_linea(auth_client, doctor_user, borrador):
     res = auth_client(doctor_user).post(f"/api/recetas/{borrador.id}/emitir/")
     assert res.status_code == 400
@@ -150,6 +173,31 @@ def test_emitir_crear_cita_creates_appointment(mock_pdf, auth_client, doctor_use
     borrador.refresh_from_db()
     assert borrador.cita_id is not None
     assert borrador.cita.status == Appointment.Status.SCHEDULED
+
+
+@patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
+def test_emitir_crear_cita_accepts_naive_datetime_string(mock_pdf, auth_client, doctor_user, borrador):
+    # Regression: the frontend sends a plain datetime-local string with no
+    # timezone offset (e.g. "2026-09-16T08:22:00"), unlike .isoformat() on
+    # an aware datetime which includes one -- this used to crash inside
+    # check_slot_available comparing a naive proxima_cita_dt against aware
+    # Appointment.date_time rows (TypeError: can't compare offset-naive and
+    # offset-aware datetimes).
+    _add_linea(borrador)
+    service_type = ServiceType.objects.create(name="CONSULTA")
+    service = Service.objects.create(
+        simon="100002", name="Consulta general", type=service_type, co_pago=0, privado=0
+    )
+    proxima_naive = (timezone.now() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S")
+    res = auth_client(doctor_user).post(
+        f"/api/recetas/{borrador.id}/emitir/",
+        {"crear_cita": True, "proxima_cita_at": proxima_naive, "servicio": service.id},
+        format="json",
+    )
+    assert res.status_code == 200, res.data
+    borrador.refresh_from_db()
+    assert borrador.cita_id is not None
+    assert timezone.is_aware(borrador.cita.date_time)
 
 
 @patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")

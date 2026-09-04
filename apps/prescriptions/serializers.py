@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.core.serializers import CoreModelSerializer
+from apps.core.services import is_own_doctor_relation
 from apps.prescriptions.models import Receta, RecetaLinea
 
 
@@ -48,6 +49,18 @@ class RecetaSerializer(CoreModelSerializer):
             "active",
         ]
         read_only_fields = ["id", "created_by", "pdf"]
+
+    def validate_medico(self, value):
+        # Mirrors AppointmentSerializer.validate_doctor/DoctorScheduleSerializer.
+        # validate_doctor: a doctor may only prescribe as themselves. The
+        # composer UI locks this field for a DOCTOR-role user, but a direct
+        # API call must not be able to spoof another doctor's identity.
+        user = self._request_user()
+        if user and user.is_authenticated and not is_own_doctor_relation(user, value):
+            raise serializers.ValidationError(
+                "Los doctores solo pueden emitir recetas a su propio nombre."
+            )
+        return value
 
     def create(self, validated_data):
         lineas = validated_data.pop("lineas", None)

@@ -95,6 +95,14 @@ class RecetaViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
                 proxima_cita_dt = parse_datetime(proxima_cita_dt)
             if proxima_cita_dt is None:
                 raise serializers.ValidationError({"proxima_cita_at": "Fecha inválida."})
+            # The frontend sends a plain datetime-local string with no
+            # timezone offset, so parse_datetime() returns it naive --
+            # unlike AppointmentSerializer's DateTimeField, which
+            # auto-localizes naive input on deserialization, this manual
+            # parse skips that step and would otherwise crash comparing
+            # against aware Appointment.date_time values below.
+            if timezone.is_naive(proxima_cita_dt):
+                proxima_cita_dt = timezone.make_aware(proxima_cita_dt)
             try:
                 servicio = Service.objects.get(pk=servicio_id)
             except Service.DoesNotExist:
