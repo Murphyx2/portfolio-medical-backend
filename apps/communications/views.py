@@ -26,7 +26,7 @@ from apps.communications.services.settings import get_communications_settings
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanSendStaffEmail, IsAdmin, IsStaffUser
 from apps.core.services import client_ip, log_audit
-from apps.patients.models import Patient
+from apps.patients.services import find_whatsapp_optin_patient_by_phone, opt_out_patient_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -304,18 +304,10 @@ def _apply_inbound_message(inbound: dict, comm_settings: CommunicationsSettings)
     if text not in OPT_OUT_KEYWORDS or not from_number:
         return
     local_10 = from_number[-10:]
-    # Patient.phone is a Fernet-encrypted column (non-deterministic
-    # ciphertext) -- an exact DB-level filter isn't possible without a blind
-    # index, so this scans only opt-in patients (small, bounded set) and
-    # compares the transparently-decrypted value in Python.
-    patient = next(
-        (p for p in Patient.objects.filter(whatsapp_opt_in=True) if p.phone == local_10),
-        None,
-    )
+    patient = find_whatsapp_optin_patient_by_phone(local_10)
     if patient is None:
         return
-    patient.whatsapp_opt_in = False
-    patient.save(update_fields=["whatsapp_opt_in"])
+    opt_out_patient_whatsapp(patient)
     e164 = to_e164(local_10, comm_settings.whatsapp_default_country_code)
     OptOut.objects.create(patient=patient, phone_e164=e164 or from_number, reason=text)
     log_audit(
