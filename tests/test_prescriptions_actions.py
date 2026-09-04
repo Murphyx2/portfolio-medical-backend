@@ -120,6 +120,40 @@ def test_receptionist_cannot_view_receta(auth_client, receptionist_user, borrado
     assert res.status_code == 403
 
 
+def test_doctor_without_binding_does_not_see_other_centers_receta(
+    auth_client, make_user, borrador
+):
+    """A doctor with no approved binding to the receta's center, and who
+    isn't its prescribing médico or creator, sees nothing -- list excludes
+    it and retrieve 404s, matching Records/Appointments/Encounters scoping
+    (RecetaViewSet.get_queryset())."""
+    other_user = make_user(username="other-doctor", role="DOCTOR")
+    DoctorProfile.objects.create(user=other_user, license_number="LIC-3", contact_phone="555-0002")
+    client = auth_client(other_user)
+    res = client.get("/api/recetas/")
+    assert res.data["count"] == 0
+    res = client.get(f"/api/recetas/{borrador.id}/")
+    assert res.status_code == 404
+
+
+def test_doctor_with_center_binding_sees_colleagues_receta(
+    auth_client, make_user, admin_user, centro, borrador
+):
+    """A doctor approved at the receta's center sees a colleague's receta
+    there too, not just recetas they personally prescribed."""
+    from apps.centers.models import DoctorCenterBinding
+
+    other_user = make_user(username="other-doctor", role="DOCTOR")
+    other_medico = DoctorProfile.objects.create(
+        user=other_user, license_number="LIC-3", contact_phone="555-0002"
+    )
+    DoctorCenterBinding.objects.create(
+        doctor=other_medico, center=centro, approved=True, approved_by=admin_user
+    )
+    res = auth_client(other_user).get("/api/recetas/")
+    assert res.data["count"] == 1
+
+
 def test_doctor_can_create_receta(auth_client, doctor_user, centro, medico, patient):
     res = auth_client(doctor_user).post(
         "/api/recetas/",
@@ -273,11 +307,16 @@ def test_anular_by_admin_succeeds(auth_client, admin_user, borrador):
 
 
 def test_anular_by_other_doctor_forbidden(auth_client, make_user, borrador):
+    # 404, not 403: this doctor has no approved binding to the receta's
+    # center and isn't its médico/creator, so get_queryset() already hides
+    # the object entirely (RecetaViewSet.get_queryset()) -- the
+    # author-or-admin check below never runs. A doctor sharing the center
+    # but not the authorship would instead reach that check and get 403.
     from apps.accounts.models import User
 
     other_doctor = make_user("other_doctor", User.Role.DOCTOR)
     res = auth_client(other_doctor).post(f"/api/recetas/{borrador.id}/anular/")
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_anular_already_anulada_rejected(auth_client, doctor_user, borrador):
@@ -331,13 +370,16 @@ def test_update_borrador_by_author_succeeds(auth_client, doctor_user, borrador):
 
 
 def test_update_borrador_by_other_doctor_forbidden(auth_client, make_user, borrador):
+    # 404, not 403 -- same reasoning as test_anular_by_other_doctor_forbidden:
+    # no center binding, not the médico, so get_queryset() hides the object
+    # before CanManageRecetas.has_object_permission ever runs.
     from apps.accounts.models import User
 
     other_doctor = make_user("other-doctor-update", User.Role.DOCTOR)
     res = auth_client(other_doctor).patch(
         f"/api/recetas/{borrador.id}/", {"proxima_cita_at": None}, format="json"
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_update_emitida_via_generic_patch_forbidden_for_doctor(auth_client, doctor_user, emitida):
@@ -386,13 +428,16 @@ def test_guardar_cambios_denied_after_window(mock_pdf, auth_client, doctor_user,
 
 
 def test_guardar_cambios_denied_for_non_owner_doctor(auth_client, make_user, emitida):
+    # 404, not 403 -- same reasoning as test_anular_by_other_doctor_forbidden:
+    # no center binding, not the médico, so get_queryset() hides the object
+    # before editable_by_within_window() ever runs.
     from apps.accounts.models import User
 
     other_doctor = make_user("other-doctor-gc", User.Role.DOCTOR)
     res = auth_client(other_doctor).post(
         f"/api/recetas/{emitida.id}/guardar_cambios/", {"lineas": _lineas_payload()}, format="json"
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 @patch("apps.prescriptions.views.generate_receta_pdf", return_value=b"%PDF-fake")
