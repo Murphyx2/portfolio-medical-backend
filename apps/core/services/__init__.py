@@ -7,7 +7,7 @@ via this re-export shim, so no caller needed to change."""
 
 from apps.core.services.audit import client_ip, log_audit
 from apps.core.services.media import MEDIA_TOKEN_MAX_AGE, sign_media_token, verify_media_token
-from apps.core.services.predicates import is_own_doctor_relation, program_belongs_to_ars
+from apps.core.services.predicates import is_own_doctor_relation
 from apps.core.services.roles import is_masked_role
 from apps.core.services.scoping import (
     can_write_center,
@@ -29,7 +29,6 @@ __all__ = [
     "sign_media_token",
     "verify_media_token",
     "is_own_doctor_relation",
-    "program_belongs_to_ars",
     "is_masked_role",
     "can_write_center",
     "resolve_accessible_center_ids",

@@ -20,24 +20,20 @@ def connect_cache_invalidation() -> None:
     from django.core.exceptions import ImproperlyConfigured
     from django.db.models.signals import post_delete, post_save
 
-    from apps.ars.models import ARS, ARSProgram
     from apps.centers.models import DoctorCenterBinding, MedicalCenter
     from apps.medicines.models import Medicine
     from apps.records.models import APCategory, APType
     from apps.rooms.models import Room, RoomType
-    from apps.services.models import Service, ServicePrice, ServiceType
+    from apps.services.models import Service, ServiceType
 
     registry = {
         model._meta.model_name: model
         for model in (
             Medicine,
-            ARS,
-            ARSProgram,
             MedicalCenter,
             DoctorCenterBinding,
             Service,
             ServiceType,
-            ServicePrice,
             Room,
             RoomType,
             APCategory,

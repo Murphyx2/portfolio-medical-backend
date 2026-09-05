@@ -12,18 +12,16 @@ from apps.patients.serializers import PatientSerializer
 
 class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Patient.all_objects.select_related(
-        "ars", "ars_program", "center"
+        "center"
     ).prefetch_related("extra_phones", "guardians").all()
     serializer_class = PatientSerializer
     permission_classes = [PatientDataPermission]
     delete_permission_classes = [CanDeletePatient]
     filter_backends = [DjangoFilterBackend, PatientSearchFilter, OrderingFilter]
-    filterset_fields = ["search_name", "gender", "ars", "center"]
+    filterset_fields = ["search_name", "gender", "center"]
     ordering_fields = [
         "search_name",
         "gender",
-        "ars__name",
-        "ars_program__name",
         "center__name",
     ]
 
@@ -51,5 +49,5 @@ class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
             # list -- it reads `getattr(view, "filterset_fields", None)"
             # directly (see get_filterset_class()), with no method hook to
             # override instead.
-            self.filterset_fields = ["gender", "ars", "center"]
+            self.filterset_fields = ["gender", "center"]
         return qs

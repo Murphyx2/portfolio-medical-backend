@@ -1,4 +1,4 @@
-"""Server-side caching of the non-PHI reference lists (medicines, ARS,
+"""Server-side caching of the non-PHI reference lists (medicines,
 medical centers) and the OpenAPI schema (apps/core/caching.py, signals.py,
 views.py::CachedSpectacularAPIView).
 
@@ -21,13 +21,12 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.ars.models import ARS
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
 from apps.rooms.models import Room, RoomType
-from apps.services.models import Service, ServicePrice, ServiceType
+from apps.services.models import Service, ServiceType
 
 
 def _query_count(client, url):
@@ -37,7 +36,7 @@ def _query_count(client, url):
 
 
 # ---------------------------------------------------------------------------
-# medicines / ARS / centers: cache hit + invalidation
+# medicines / centers: cache hit + invalidation
 # ---------------------------------------------------------------------------
 
 
@@ -125,22 +124,6 @@ def test_room_type_list_cached_and_invalidated(auth_client, admin_user, db):
     assert client.get("/api/room-types/").data["count"] == res1.data["count"]
 
 
-def test_ars_list_cached_and_invalidated(auth_client, admin_user, db):
-    # ARS/ARSProgram are seeded (SEMMA/SENASA) by a data migration, so start
-    # from whatever count is already there rather than assuming empty.
-    client = auth_client(admin_user)
-    res1, n1 = _query_count(client, "/api/ars/")
-    assert n1 > 0
-    baseline = res1.data["count"]
-    res2, n2 = _query_count(client, "/api/ars/")
-    assert n2 == 0
-    assert res2.data["count"] == res1.data["count"]
-    assert res2.data["results"] == res1.data["results"]
-
-    ARS.objects.create(ars_id="Q1", name="Insurer Q")
-    assert client.get("/api/ars/").data["count"] == baseline + 1
-
-
 def test_room_list_cached_and_invalidated(auth_client, admin_user, db):
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
@@ -191,30 +174,6 @@ def test_service_list_cached_and_invalidated(auth_client, admin_user, db):
 
     service.delete()
     assert client.get("/api/services/").data["count"] == res1.data["count"]
-
-
-def test_service_price_list_cached_and_invalidated(auth_client, admin_user, db):
-    """Regression: ServicePrice was missing from _CACHE_INVALIDATION_MAP and
-    the signals registry, so a create through the API landed in the DB but
-    the very next list request kept serving the stale cached (pre-create)
-    response -- indistinguishable from the write silently failing."""
-    service_type = ServiceType.objects.create(name="Laboratorio")
-    service = Service.objects.create(
-        simon="100002", name="Lab test", type=service_type, co_pago=0, privado=0
-    )
-    ars = ARS.objects.create(ars_id="TA", name="Test ARS")
-    client = auth_client(admin_user)
-    res1, n1 = _query_count(client, "/api/service-prices/")
-    assert n1 > 0
-    res2, n2 = _query_count(client, "/api/service-prices/")
-    assert n2 == 0
-    assert res2.data["count"] == res1.data["count"]
-
-    price = ServicePrice.objects.create(service=service, ars=ars, co_pago="300.00")
-    assert client.get("/api/service-prices/").data["count"] == res1.data["count"] + 1
-
-    price.delete()
-    assert client.get("/api/service-prices/").data["count"] == res1.data["count"]
 
 
 def test_doctor_center_binding_approval_invalidates_center_list_cache(

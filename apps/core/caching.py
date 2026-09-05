@@ -1,9 +1,9 @@
 """Server-side caching for the safe, auth-agnostic reference lists.
 
-Only non-PHI lookup data (medicines, ARS insurers/programs, medical centers) is
-cached. Patients, records, appointments and doctor profiles carry PII or
-role-specific masking and must never be cached server-side (M-05 asserts the
-``Cache-Control: no-store`` response header for them).
+Only non-PHI lookup data (medicines, medical centers) is cached. Patients,
+records, appointments and doctor profiles carry PII or role-specific masking
+and must never be cached server-side (M-05 asserts the ``Cache-Control:
+no-store`` response header for them).
 
 The cached lists are identical for every authenticated staff member -- with
 one exception: admin requests carrying ``?include_inactive=true`` see a
@@ -14,7 +14,7 @@ risk serving one role's response to another. This is low-volume traffic
 adding a role dimension to every cache key. Writes bump a per-model version
 counter (``apps.core.signals``, wired to ``post_save``/``post_delete`` so
 Django-admin edits invalidate the cache too, not just API writes) so a newly
-created, updated, or deactivated medicine/ARS/center shows up on the very
+created, updated, or deactivated medicine/center shows up on the very
 next request instead of waiting for the TTL to expire.
 """
 
@@ -29,17 +29,13 @@ CACHE_TTL = 300
 CACHE_VERSION_TTL = None
 
 # Model -> set of cached list keys to invalidate when a row of that model
-# changes. arsprogram writes go through the ARS serializer but are mapped to
-# the ARS list too, and doctor bindings feed the center doctor_count.
+# changes. Doctor bindings feed the center doctor_count.
 _CACHE_INVALIDATION_MAP = {
     "medicine": ("medicine",),
-    "ars": ("ars",),
-    "arsprogram": ("ars", "arsprogram"),
     "medicalcenter": ("medicalcenter",),
     "doctorcenterbinding": ("medicalcenter", "doctorcenterbinding"),
     "service": ("service",),
     "servicetype": ("servicetype", "service"),
-    "serviceprice": ("serviceprice",),
     "room": ("room",),
     "roomtype": ("roomtype",),
     "apcategory": ("apcategory",),

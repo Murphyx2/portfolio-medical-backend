@@ -5,7 +5,7 @@ from django.db import migrations
 
 def backfill_default_center(apps, schema_editor):
     # Assigns every currently-centerless patient to the default center. A
-    # no-op wherever no code="INCAF" center exists (e.g. test databases).
+    # no-op wherever no code="DEMO" center exists (e.g. test databases).
     # Patients already bound to a different center are left untouched.
     # Intentional scoping change: per CLAUDE.md, a nullable `center` means
     # "visible to all staff" -- this removes that open visibility for every
@@ -13,9 +13,9 @@ def backfill_default_center(apps, schema_editor):
     # approved doctors going forward.
     MedicalCenter = apps.get_model("centers", "MedicalCenter")
     Patient = apps.get_model("patients", "Patient")
-    incaf = MedicalCenter.objects.filter(code="INCAF").first()
-    if incaf:
-        Patient.objects.filter(center__isnull=True).update(center=incaf)
+    default_center = MedicalCenter.objects.filter(code="DEMO").first()
+    if default_center:
+        Patient.objects.filter(center__isnull=True).update(center=default_center)
 
 
 class Migration(migrations.Migration):

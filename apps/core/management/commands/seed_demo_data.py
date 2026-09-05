@@ -8,7 +8,7 @@ For now this only covers Patients + Records (the two things prone to
 accumulating rule-breaking junk from repeated QA-script runs against the dev
 stack -- e.g. duplicate/reused cedula and NSS values). It's written as a
 reusable demo-data generator, not a one-off script: covering the remaining
-pages (centers/doctors/medicines/appointments/ars) later is a matter of
+pages (centers/doctors/medicines/appointments) later is a matter of
 adding more sections to this same command.
 
 Deletes every Patient row (a real DB delete, not the soft-delete the API
@@ -25,7 +25,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.ars.models import ARS
+from apps.centers.models import MedicalCenter
 from apps.patients.models import Patient, PatientGuardian
 from apps.records.models import MedicalRecord, RecordEntry
 
@@ -53,12 +53,6 @@ RECORD_TITLES = [
 ]
 
 DR_AREA_CODES = ["809", "829", "849"]
-
-# Fraction of patients over 50 who get an ARS/program on file -- "some", not
-# all, matches the NSS fill-rate pattern below and reflects that not every
-# older patient has active insurance.
-ARS_ASSIGNMENT_PROBABILITY = 0.6
-ARS_MIN_AGE = 50
 
 
 class Command(BaseCommand):
@@ -95,6 +89,16 @@ class Command(BaseCommand):
         rng = random.Random(options["seed"])
 
         with transaction.atomic():
+            MedicalCenter.objects.get_or_create(
+                code="DEMO",
+                defaults={
+                    "name": "Demo Medical Center",
+                    "address": "123 Demo St., Sample City",
+                    "phone": "8095550000",
+                    "is_default": True,
+                },
+            )
+
             deleted_patients = Patient.all_objects.count()
             Patient.all_objects.all().delete()
 
@@ -111,14 +115,6 @@ class Command(BaseCommand):
     def _create_patients(self, rng: random.Random, count: int) -> list[Patient]:
         used_cedulas: set[str] = set()
         used_nss: set[str] = set()
-        # Real seeded insurers (SEMMA/SENASA, per PROGRESS.md) with at least
-        # one program -- excludes the QA/RBAC-script ARS clutter that
-        # accumulates in this table (matches this file's own reason for
-        # existing: undo QA-script junk, don't propagate it into fresh data).
-        ars_choices = [
-            a for a in ARS.objects.filter(ars_id__in=["SM", "SE"]).prefetch_related("programs")
-            if a.programs.exists()
-        ]
         patients = []
         for _ in range(count):
             first = rng.choice(FIRST_NAMES)
@@ -139,19 +135,11 @@ class Command(BaseCommand):
             )
             age = self._age(birth_date)
             is_minor = age < 18
-            if not is_minor and age > ARS_MIN_AGE and ars_choices and rng.random() < ARS_ASSIGNMENT_PROBABILITY:
-                patient_kwargs.update(self._ars_kwargs(rng, ars_choices))
             patient = Patient.objects.create(**patient_kwargs)
             if is_minor:
                 PatientGuardian.objects.create(patient=patient, **self._guardian_kwargs(rng))
             patients.append(patient)
         return patients
-
-    @staticmethod
-    def _ars_kwargs(rng: random.Random, ars_choices: list[ARS]) -> dict:
-        ars = rng.choice(ars_choices)
-        programs = list(ars.programs.all())
-        return {"ars": ars, "ars_program": rng.choice(programs) if programs else None}
 
     def _guardian_kwargs(self, rng: random.Random) -> dict:
         """Synthetic PatientGuardian fields for a minor patient (no

@@ -11,7 +11,7 @@ from apps.centers.models import MedicalCenter
 from apps.core.encryption import blind_index_digits
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
-from apps.core.services import can_write_center, program_belongs_to_ars
+from apps.core.services import can_write_center
 from apps.core.validators import validate_phone
 from apps.patients.models import Patient, PatientGuardian, PatientPhoneNumber, patient_age
 
@@ -70,12 +70,11 @@ class PatientSummarySerializer(serializers.ModelSerializer):
 
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
-    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
-    # Backward-compat surface: consumers (Encounters' nested patient_info,
-    # the guardian-cedula icon on Patients/Encounters lists) still expect one
-    # flat guardian_cedula value even though a patient can now have several
-    # guardians on file -- this exposes the first one, same as before
-    # guardians became a list. New code should read `.guardians` directly.
+    # Backward-compat surface: consumers (the guardian-cedula icon on
+    # Patients lists) still expect one flat guardian_cedula value even
+    # though a patient can now have several guardians on file -- this
+    # exposes the first one, same as before guardians became a list. New
+    # code should read `.guardians` directly.
     guardian_cedula = serializers.SerializerMethodField()
 
     class Meta:
@@ -89,9 +88,6 @@ class PatientSummarySerializer(serializers.ModelSerializer):
             "nss",
             "allergies",
             "critical_conditions",
-            "ars",
-            "ars_name",
-            "ars_program",
             "has_guardian",
             "guardian_cedula",
         ]
@@ -135,10 +131,6 @@ class PatientGuardianSerializer(serializers.ModelSerializer):
 class PatientSerializer(CoreModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
-    ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
-    ars_program_name = serializers.CharField(
-        source="ars_program.name", read_only=True, default=None
-    )
     center_name = serializers.CharField(source="center.name", read_only=True, default=None)
     center_code = serializers.CharField(source="center.code", read_only=True, default=None)
     # Additional phone numbers beyond the primary `phone` field -- write side
@@ -169,10 +161,6 @@ class PatientSerializer(CoreModelSerializer):
             "email",
             "cedula",
             "nss",
-            "ars",
-            "ars_name",
-            "ars_program",
-            "ars_program_name",
             "has_guardian",
             "guardians",
             "allergies",
@@ -299,15 +287,6 @@ class PatientSerializer(CoreModelSerializer):
         return normalized
 
     def validate(self, attrs):
-        ars = attrs.get("ars")
-        if ars is None and self.instance is not None:
-            ars = self.instance.ars
-        program = attrs.get("ars_program")
-        if not program_belongs_to_ars(ars, program):
-            raise serializers.ValidationError(
-                {"ars_program": "The selected program does not belong to the selected ARS."}
-            )
-
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         center = attrs.get("center")
@@ -331,9 +310,7 @@ class PatientSerializer(CoreModelSerializer):
         # a PATCH to an unrelated field (e.g. "phone") would re-run this
         # against a blank cedula/guardian_* fallback and permanently lock out
         # any existing minor whose cedula/guardian info isn't on file yet
-        # (e.g. every minor already in the seeded dev data). Same pattern as
-        # the ars_program check above, which only fires when ars_program is
-        # actually present in attrs.
+        # (e.g. every minor already in the seeded dev data).
         if self.instance is None or any(k in attrs for k in _GUARDIAN_TRIGGER_KEYS):
             birth_date = attrs.get(
                 "birth_date", self.instance.birth_date if self.instance else None

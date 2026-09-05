@@ -13,7 +13,6 @@ from rest_framework.test import APIRequestFactory
 
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.masking import apply_masking, mask_doctor_contact
-from apps.core.permissions import is_owner_doctor
 from apps.core.services import (
     can_view_inactive,
     can_write_center,
@@ -22,7 +21,6 @@ from apps.core.services import (
     is_masked_role,
     is_own_doctor_relation,
     log_audit,
-    program_belongs_to_ars,
     resolve_accessible_center_ids,
     scope_queryset,
     soft_delete_field_name,
@@ -31,15 +29,10 @@ from apps.core.services import (
     sign_media_token,
 )
 from apps.doctors.models import DoctorProfile
-from apps.encounters.filters import EncounterSearchFilter
-from apps.encounters.models import Encounter
-from apps.encounters.serializers import _sync_related
 from apps.patients.filters import PatientSearchFilter
 from apps.patients.models import Patient
 from apps.records.filters import RecordSearchFilter
 from apps.records.models import MedicalRecord
-from apps.rooms.models import Room, RoomType
-from apps.services.models import ServiceType
 
 
 def _make_patient(**overrides):
@@ -64,27 +57,6 @@ def _make_doctor(user, **overrides):
     data = {"license_number": f"LIC-{user.id}", "contact_phone": "8095550000"}
     data.update(overrides)
     return DoctorProfile.objects.create(user=user, **data)
-
-
-def _make_service_type(**overrides):
-    data = {"name": "Consulta", "requires_doctor": False}
-    data.update(overrides)
-    return ServiceType.objects.get_or_create(
-        name=data.pop("name").upper(), defaults=data
-    )[0]
-
-
-def _make_room(center, **overrides):
-    room_type = RoomType.objects.get_or_create(name="CONSULT")[0]
-    data = {"code": f"R{center.pk}", "name": "Room 1", "room_type": room_type, "center": center}
-    data.update(overrides)
-    return Room.objects.create(**data)
-
-
-def _make_encounter(patient, created_by, **overrides):
-    data = {"service_type": _make_service_type(), "patient": patient, "created_by": created_by}
-    data.update(overrides)
-    return Encounter.objects.create(**data)
 
 
 def _search_request(user, term):
@@ -279,8 +251,8 @@ def test_soft_delete_field_name(admin_user):
 
 
 def test_deactivate_with_cascade_cascades_to_related_soft_deletable_rows(doctor_user):
-    """MedicalRecord.patient is on_delete=CASCADE (unlike Encounter.patient,
-    which is PROTECT) -- it's the genuine cascade edge off Patient."""
+    """MedicalRecord.patient is on_delete=CASCADE -- the genuine cascade
+    edge off Patient."""
     patient = _make_patient()
     record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
     assert patient.active is True
@@ -305,21 +277,6 @@ def test_deactivate_with_cascade_is_idempotent(doctor_user):
     patient.refresh_from_db()
     assert patient.active is False
 
-
-def test_deactivate_with_cascade_stops_at_protect_relations(doctor_user):
-    """Encounter.patient is on_delete=PROTECT, not CASCADE -- it (and
-    anything reachable only through it, like service_type) must be left
-    untouched by cascading through the patient."""
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    service_type = encounter.service_type
-
-    deactivate_with_cascade(patient)
-
-    encounter.refresh_from_db()
-    service_type.refresh_from_db()
-    assert encounter.active is True
-    assert service_type.active is True
 
 
 # ---------------------------------------------------------------------------
@@ -501,174 +458,6 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
     assert result["bio"] is None
 
 
-# ---------------------------------------------------------------------------
-# Encounter.ready_for_active
-# ---------------------------------------------------------------------------
-
-
-def test_ready_for_active_requires_room(doctor_user):
-    from apps.services.models import Service
-
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    service = Service.objects.create(
-        simon="100010", name="Ready room test", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service)
-    errors = encounter.ready_for_active()
-    assert "A room is required to admit this encounter." in errors
-
-
-def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
-    # Diagnosis capture was removed from the admission flow entirely --
-    # ready_for_active() never checks for a diagnosis at all.
-    from apps.services.models import Service
-
-    center = _make_center(code="C-READY1")
-    room = _make_room(center)
-    patient = _make_patient()
-    encounter = _make_encounter(
-        patient,
-        doctor_user,
-        service_type=_make_service_type(name="Needs Dx"),
-    )
-    service = Service.objects.create(
-        simon="100011", name="Ready no dx test", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service, room=room)
-    assert encounter.ready_for_active() == []
-
-
-# ---------------------------------------------------------------------------
-# _sync_related
-# ---------------------------------------------------------------------------
-
-
-def test_sync_related_creates_new_items(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-
-    _sync_related(
-        encounter.diagnoses,
-        [{"description": "Flu", "is_primary": True}],
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    assert encounter.diagnoses.count() == 1
-    assert encounter.diagnoses.first().description == "Flu"
-
-
-def test_sync_related_updates_matching_id_in_place(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    existing = encounter.diagnoses.create(description="Old", is_primary=False)
-
-    _sync_related(
-        encounter.diagnoses,
-        [{"id": existing.pk, "description": "Updated", "is_primary": True}],
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    existing.refresh_from_db()
-    assert existing.description == "Updated"
-    assert existing.is_primary is True
-    assert encounter.diagnoses.count() == 1
-
-
-def test_sync_related_deletes_rows_not_resubmitted(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    keep = encounter.diagnoses.create(description="Keep", is_primary=False)
-    encounter.diagnoses.create(description="Drop", is_primary=False)
-
-    _sync_related(
-        encounter.diagnoses,
-        [{"id": keep.pk, "description": "Keep", "is_primary": False}],
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    assert list(encounter.diagnoses.values_list("pk", flat=True)) == [keep.pk]
-
-
-def test_sync_related_empty_items_deletes_all_existing(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    encounter.diagnoses.create(description="Gone", is_primary=False)
-
-    _sync_related(
-        encounter.diagnoses,
-        [],
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    assert encounter.diagnoses.count() == 0
-
-
-def test_sync_related_invalid_items_are_skipped_entirely(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    keep = encounter.diagnoses.create(description="Keep", is_primary=False)
-
-    _sync_related(
-        encounter.diagnoses,
-        [{"description": ""}],  # invalid: empty description
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    # Invalid item is skipped; it does not count toward keep_ids, but since
-    # it was never processed the existing row is *not* deleted by it either
-    # -- only rows omitted by *valid* resubmission are pruned. Here nothing
-    # valid was submitted, so keep_ids is empty and the existing row is
-    # deleted (same as the empty-items case).
-    assert encounter.diagnoses.count() == 0
-    assert keep.pk not in encounter.diagnoses.values_list("pk", flat=True)
-
-
-def test_sync_related_id_from_another_encounter_is_not_hijacked(doctor_user):
-    """An id belonging to another encounter's diagnosis must not be updated
-    through a differently-scoped manager -- it should be treated as a create
-    instead, since manager.filter(pk=item_id) is scoped to the owning
-    encounter."""
-    patient = _make_patient()
-    encounter_a = _make_encounter(patient, doctor_user)
-    encounter_b = _make_encounter(patient, doctor_user)
-    foreign = encounter_a.diagnoses.create(description="Belongs to A", is_primary=False)
-
-    _sync_related(
-        encounter_b.diagnoses,
-        [{"id": foreign.pk, "description": "New for B", "is_primary": False}],
-        is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item, obj: {
-            "description": item["description"],
-            "is_primary": item.get("is_primary", False),
-        },
-    )
-
-    foreign.refresh_from_db()
-    assert foreign.description == "Belongs to A"  # untouched
-    assert encounter_b.diagnoses.count() == 1
-    assert encounter_b.diagnoses.first().description == "New for B"
-
 
 # ---------------------------------------------------------------------------
 # Search filters: masked-role behavior differs per filter (pinned here so B1
@@ -694,54 +483,6 @@ def test_patient_search_filter_unmasked_role_filters_by_name(receptionist_user):
     qs = PatientSearchFilter().filter_queryset(request, Patient.objects.all(), None)
 
     assert list(qs.values_list("id", flat=True)) == [match.id]
-
-
-def test_encounter_search_filter_masked_role_restricted_to_doctor_code_and_number(
-    it_user, doctor_user
-):
-    from apps.services.models import Service
-
-    doctor = _make_doctor(doctor_user)
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    service = Service.objects.create(
-        simon="100020", name="Search filter test", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service, doctor=doctor)
-
-    # Masked role: patient-name term finds nothing (name search withheld).
-    request = _search_request(it_user, patient.first_name)
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert qs.count() == 0
-
-    # Masked role: doctor-code term still works.
-    request = _search_request(it_user, doctor.code)
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert list(qs.values_list("id", flat=True)) == [encounter.id]
-
-
-def test_encounter_search_filter_masked_role_gets_no_digit_search(it_user, doctor_user):
-    patient = _make_patient(cedula="00112345678")
-    _make_encounter(patient, doctor_user)
-
-    request = _search_request(it_user, "00112345678")
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert qs.count() == 0
-
-
-def test_encounter_search_filter_unmasked_role_matches_patient_name_and_digits(
-    receptionist_user, doctor_user
-):
-    patient = _make_patient(first_name="Ana", cedula="00112345678")
-    encounter = _make_encounter(patient, doctor_user)
-
-    request = _search_request(receptionist_user, "Ana")
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert list(qs.values_list("id", flat=True)) == [encounter.id]
-
-    request = _search_request(receptionist_user, "00112345678")
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert list(qs.values_list("id", flat=True)) == [encounter.id]
 
 
 def test_record_search_filter_masked_role_matches_name_but_not_digits(it_user, doctor_user):
@@ -801,23 +542,6 @@ def test_patient_search_filter_guardian_cedula_matches(receptionist_user):
     qs = PatientSearchFilter().filter_queryset(request, Patient.objects.all(), None)
     assert list(qs.values_list("id", flat=True)) == [minor.id]
 
-
-def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_user, doctor_user):
-    """EncounterSearchFilter's digit lookup deliberately omits
-    include_guardian -- confirms the one documented behavioral fork between
-    PatientSearchFilter and EncounterSearchFilter."""
-    from apps.patients.models import PatientGuardian
-
-    guardian_cedula = "00198765432"
-    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
-    PatientGuardian.objects.create(
-        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
-    )
-    _make_encounter(minor, doctor_user)
-
-    request = _search_request(receptionist_user, guardian_cedula)
-    qs = EncounterSearchFilter().filter_queryset(request, Encounter.objects.all(), None)
-    assert qs.count() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -880,121 +604,3 @@ def test_is_own_doctor_relation_doctor_without_profile(doctor_user, admin_user):
     assert is_own_doctor_relation(doctor_user, foreign) is False
 
 
-def test_program_belongs_to_ars_none_ars_or_program_always_true(db):
-    from apps.ars.models import ARS, ARSProgram
-
-    ars = ARS.objects.create(ars_id="A1", name="Test ARS")
-    program = ARSProgram.objects.create(ars=ars, name="Basic")
-    assert program_belongs_to_ars(None, program) is True
-    assert program_belongs_to_ars(ars, None) is True
-    assert program_belongs_to_ars(None, None) is True
-
-
-def test_program_belongs_to_ars_matching(db):
-    from apps.ars.models import ARS, ARSProgram
-
-    ars = ARS.objects.create(ars_id="A2", name="Matching ARS")
-    program = ARSProgram.objects.create(ars=ars, name="Plus")
-    assert program_belongs_to_ars(ars, program) is True
-
-
-def test_program_belongs_to_ars_mismatched(db):
-    from apps.ars.models import ARS, ARSProgram
-
-    ars_a = ARS.objects.create(ars_id="A3", name="ARS A")
-    ars_b = ARS.objects.create(ars_id="A4", name="ARS B")
-    program = ARSProgram.objects.create(ars=ars_b, name="Plus")
-    assert program_belongs_to_ars(ars_a, program) is False
-
-
-# ---------------------------------------------------------------------------
-# is_owner_doctor (B4)
-# ---------------------------------------------------------------------------
-
-
-def _encounter_with_doctor(patient, created_by, doctor):
-    """is_owner_doctor test helper: an encounter with one service line
-    assigned to `doctor` (ownership now lives on the service line, not on
-    Encounter itself)."""
-    from apps.services.models import Service
-
-    encounter = _make_encounter(patient, created_by)
-    service = Service.objects.create(
-        simon="100021", name="Owner doctor test", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service, doctor=doctor)
-    return encounter
-
-
-def test_is_owner_doctor_non_doctor_always_true(admin_user, doctor_user):
-    doctor = _make_doctor(doctor_user)
-    patient = _make_patient()
-    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
-    assert is_owner_doctor(admin_user, encounter) is True
-
-
-def test_is_owner_doctor_owning_doctor_true(doctor_user):
-    doctor = _make_doctor(doctor_user)
-    patient = _make_patient()
-    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
-    assert is_owner_doctor(doctor_user, encounter) is True
-
-
-def test_is_owner_doctor_foreign_doctor_false(doctor_user, admin_user):
-    other_user_doctor = _make_doctor(doctor_user)
-    patient = _make_patient()
-    encounter = _encounter_with_doctor(patient, doctor_user, other_user_doctor)
-
-    from apps.accounts.models import User
-
-    foreign_user = User.objects.create_user(
-        username="foreign_doctor", password="pass12345", role=User.Role.DOCTOR
-    )
-    assert is_owner_doctor(foreign_user, encounter) is False
-
-
-# ---------------------------------------------------------------------------
-# Encounter.has_completed_service / is_locked_for_edit (B4)
-# ---------------------------------------------------------------------------
-
-
-def test_encounter_not_locked_when_draft_and_no_completed_service(doctor_user):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user)
-    assert encounter.has_completed_service() is False
-    assert encounter.is_locked_for_edit() is False
-
-
-@pytest.mark.parametrize("status", ["COMPLETED", "CANCELLED"])
-def test_encounter_locked_when_terminal_status(doctor_user, status):
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, status=status)
-    assert encounter.is_locked_for_edit() is True
-
-
-def test_encounter_locked_when_has_completed_service(doctor_user):
-    from apps.services.models import Service
-
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, status="ACTIVE")
-    service = Service.objects.create(
-        simon="100001", name="Lab test", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service, status="COMPLETED")
-
-    assert encounter.has_completed_service() is True
-    assert encounter.is_locked_for_edit() is True
-
-
-def test_encounter_not_locked_when_service_pending(doctor_user):
-    from apps.services.models import Service
-
-    patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, status="ACTIVE")
-    service = Service.objects.create(
-        simon="100002", name="Lab test 2", type=encounter.service_type, co_pago=0, privado=0
-    )
-    encounter.services.create(service=service, status="PENDING")
-
-    assert encounter.has_completed_service() is False
-    assert encounter.is_locked_for_edit() is False

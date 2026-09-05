@@ -8,21 +8,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ars', '0001_initial'),
         ('patients', '0001_initial'),
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='patient',
-            name='ars',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='patients', to='ars.ars'),
-        ),
-        migrations.AddField(
-            model_name='patient',
-            name='ars_program',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='patients', to='ars.arsprogram'),
-        ),
         migrations.AddField(
             model_name='patient',
             name='cedula',

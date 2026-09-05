@@ -22,6 +22,3 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     }
 }
-
-# Never hit real SMTP during tests (apps.communications).
-EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"

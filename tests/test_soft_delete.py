@@ -22,7 +22,6 @@ from rest_framework.test import APIClient
 from apps.appointments.models import Appointment
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile, DoctorSchedule
-from apps.encounters.models import Encounter
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
 from apps.records.models import MedicalRecord, RecordImage
@@ -395,7 +394,6 @@ def _restore_url(name, object_id):
         "record_image": "/api/images/",
         "room": "/api/rooms/",
         "room_type": "/api/room-types/",
-        "encounter": "/api/encounters/",
     }
     return f"{prefixes[name]}{object_id}/restore/"
 
@@ -420,9 +418,6 @@ def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
     image = RecordImage.objects.create(record=record, image="test.jpg", caption="x")
     rt = RoomType.objects.create(name="RT")
     room = Room.objects.create(code="R1", name="Room 1", room_type=rt, center=center)
-    encounter = Encounter.objects.create(
-        patient=patient, service_type=st, created_by=admin_user
-    )
 
     targets = {
         "medicine": med,
@@ -436,7 +431,6 @@ def _seed_restore_targets(admin_user, doctor_user, receptionist_user):
         "record_image": image,
         "room": room,
         "room_type": rt,
-        "encounter": encounter,
     }
     urls = {}
     for name, obj in targets.items():

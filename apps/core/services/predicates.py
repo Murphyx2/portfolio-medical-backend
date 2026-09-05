@@ -10,9 +10,3 @@ def is_own_doctor_relation(user, doctor_profile) -> bool:
         return True
     own = getattr(user, "doctor_profile", None)
     return own is not None and doctor_profile is not None and doctor_profile.id == own.id
-
-
-def program_belongs_to_ars(ars, program) -> bool:
-    """True unless both an ARS and a program are given and the program
-    belongs to a different ARS."""
-    return ars is None or program is None or program.ars_id == ars.id

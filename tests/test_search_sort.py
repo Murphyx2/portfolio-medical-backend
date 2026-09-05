@@ -14,7 +14,6 @@ Security invariants:
 import pytest
 
 from apps.appointments.models import Appointment
-from apps.ars.models import ARS
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
@@ -159,17 +158,6 @@ def test_patient_ordering_plaintext_field(auth_client, admin_user, mixed_patient
     names = [r["full_name"] for r in res.data["results"]]
     assert names == sorted(names, reverse=True)
 
-
-def test_patient_ordering_by_related_ars_name(auth_client, admin_user, db):
-    # ars_id "SE"/"SM" are already seeded by a data migration, so use free ids.
-    a1 = ARS.objects.create(ars_id="AA", name="Alpha")
-    a2 = ARS.objects.create(ars_id="ZZ", name="Zulu")
-    _patient(first_name="Bee", last_name="B", ars=a1, cedula="11100000001", nss="")
-    _patient(first_name="Abe", last_name="A", ars=a2, cedula="11100000002", nss="")
-    res = auth_client(admin_user).get("/api/patients/?ordering=ars__name&page_size=20")
-    assert res.data["results"][0]["full_name"] == "Bee B"
-    res = auth_client(admin_user).get("/api/patients/?ordering=-ars__name&page_size=20")
-    assert res.data["results"][0]["full_name"] == "Abe A"
 
 
 def test_patient_ordering_encrypted_field_falls_back_to_default(

@@ -1,7 +1,6 @@
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.ars.models import ARS, ARSProgram
 from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
 from apps.core.models import AuditLog
@@ -224,11 +223,9 @@ def _query_count(client, url):
 def test_patient_list_query_count_does_not_scale_with_row_count(
     auth_client, admin_user, db
 ):
-    # ars_name/ars_program_name/center_name are serializer fields sourced
-    # from related objects (PatientSerializer); without select_related each
-    # row would cost 3 extra queries (N+1).
-    ars = ARS.objects.create(ars_id="Q1", name="Insurer")
-    program = ARSProgram.objects.create(ars=ars, name="Plan A")
+    # center_name is a serializer field sourced from a related object
+    # (PatientSerializer); without select_related each row would cost an
+    # extra query (N+1).
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
@@ -238,8 +235,6 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
             Patient.objects.create(
                 first_name=f"P{i}",
                 last_name="X",
-                ars=ars,
-                ars_program=program,
                 center=center,
             )
 

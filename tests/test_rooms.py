@@ -269,13 +269,13 @@ def test_filter_by_room_type_and_center(auth_client, admin_user):
 
 
 def test_room_list_includes_center_name_and_room_type_name(auth_client, admin_user):
-    center = _center(code="INCAF")
+    center = _center(code="DEMO2")
     room_type = _room_type(name="Consulta")
     _room(center=center, room_type=room_type)
     res = auth_client(admin_user).get("/api/rooms/")
     assert res.status_code == 200, res.data
     row = res.data["results"][0]
-    assert row["center_name"] == "Center INCAF"
+    assert row["center_name"] == "Center DEMO2"
     # "Consulta" is legacy seed data (apps/rooms/migrations/0003_seed_room_types.py,
     # inserted via a historical model that bypasses RoomType.save()) reused
     # as-is by _room_type() via get_or_create -- not re-saved here, so it's

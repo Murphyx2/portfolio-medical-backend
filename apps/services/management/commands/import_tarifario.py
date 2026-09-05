@@ -1,5 +1,5 @@
-"""Upsert Service.privado (and create missing services) from the official
-INCAF tarifario Excel workbook (one sheet per category: SERVICIOS,
+"""Upsert Service.privado (and create missing services) from the clinic's
+tarifario Excel workbook (one sheet per category: SERVICIOS,
 PROCEDIMIENTOS, IMAGENES, VACUNAS, CARDIOLOGIA -- each row is
 No / SIMON code / description / ... / price).
 

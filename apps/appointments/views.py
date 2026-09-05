@@ -9,19 +9,12 @@ from rest_framework.response import Response
 from apps.appointments.models import Appointment
 from apps.appointments.serializers import AppointmentSerializer
 from apps.appointments.services import cancel_noshow_appointments
-from apps.communications.services.appointments import (
-    AppointmentNotificationKind,
-    cancel_queued_reminders,
-    notify_appointment_event,
-    queue_manual_reminder,
-)
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanCancelAppointment,
     CanCompleteAppointment,
     CanDeleteAppointments,
     CanManageAppointments,
-    CanSendManualReminder,
     IsStaffUser,
 )
 from apps.core.services import scope_queryset
@@ -99,8 +92,6 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         appointment.cancel_reason = reason
         appointment.save(update_fields=["status", "cancel_reason"])
         self.log_action(appointment, "UPDATE", details={"status": "CANCELLED", "reason": reason})
-        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_CANCELADA, user=request.user)
-        cancel_queued_reminders(appointment)
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
@@ -116,7 +107,6 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         appointment.status = Appointment.Status.CONFIRMED
         appointment.save()
         self.log_action(appointment, "UPDATE", details={"status": "CONFIRMED"})
-        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_CREADA, user=request.user)
         return Response(self.get_serializer(appointment).data)
 
     @action(detail=True, methods=["post"])
@@ -148,7 +138,6 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
         serializer.is_valid(raise_exception=True)
         serializer.save()
         self.log_action(appointment, "UPDATE", details={"date_time": serializer.data["date_time"]})
-        notify_appointment_event(appointment, AppointmentNotificationKind.CITA_REAGENDADA, user=request.user)
         return Response(serializer.data)
 
     @action(detail=False, methods=["get"])
@@ -171,13 +160,3 @@ class AppointmentViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
             date_time__lte=end_of_day,
         ).count()
         return Response({"count": count})
-
-    @action(detail=True, methods=["post"], permission_classes=[CanSendManualReminder])
-    def send_whatsapp_reminder(self, request, pk=None):
-        # queue_manual_reminder raises rest_framework.exceptions.ValidationError
-        # directly (with the exact Spanish copy strings the frontend expects)
-        # on any precondition failure -- let it propagate as-is for a 400.
-        appointment = self.get_object()
-        queue_manual_reminder(appointment, request.user)
-        self.log_action(appointment, "CREATE", details={"communication": "manual_reminder"})
-        return Response({"detail": "Recordatorio en cola."}, status=201)

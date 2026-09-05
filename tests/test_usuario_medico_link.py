@@ -51,7 +51,7 @@ def test_create_doctor_profile_with_create_account_creates_linked_user(auth_clie
             "create_account": {
                 "username": "ana.torres",
                 "password": "Str0ngPass123!",
-                "email": "ana@incaf.example",
+                "email": "ana@example.com",
             },
         },
         format="json",

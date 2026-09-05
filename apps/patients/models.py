@@ -83,22 +83,6 @@ class Patient(TimestampedModel, SoftDeleteModel):
         related_name="patients",
     )
 
-    # Insurance (ARS) binding
-    ars = models.ForeignKey(
-        "ars.ARS",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="patients",
-    )
-    ars_program = models.ForeignKey(
-        "ars.ARSProgram",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="patients",
-    )
-
     # Whether guardian/parent info is collected for this (minor) patient at
     # all -- see PatientSerializer.validate for the conditional-required
     # rule. The guardians themselves live in the related PatientGuardian

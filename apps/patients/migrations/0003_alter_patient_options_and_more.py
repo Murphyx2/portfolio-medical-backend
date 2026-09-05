@@ -8,7 +8,6 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ars', '0002_seed_defaults'),
         ('centers', '0002_initial'),
         ('patients', '0002_patient_ars_patient_ars_program_patient_cedula_and_more'),
     ]

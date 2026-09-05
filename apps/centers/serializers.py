@@ -91,32 +91,6 @@ class MedicalCenterSerializer(CoreModelSerializer):
         return center
 
 
-class MedicalCenterLetterheadSerializer(serializers.ModelSerializer):
-    """Non-sensitive subset of MedicalCenter for the Receta composer's
-    letterhead preview -- deliberately excludes code/doctor_count/is_default
-    (and every other admin-facing field), since this is the one center-data
-    view exposed beyond ADMIN/CENTER_MANAGER (see MedicalCenterViewSet's own
-    docstring for why the full endpoint stays locked down)."""
-
-    phones = MedicalCenterPhoneSerializer(many=True, read_only=True)
-    emails = MedicalCenterEmailSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = MedicalCenter
-        fields = [
-            "id",
-            "name",
-            "nombre_legal",
-            "nombre_corto",
-            "rnc",
-            "address",
-            "logo",
-            "phone",
-            "email",
-            "phones",
-            "emails",
-            "is_default",
-        ]
 
 
 class DoctorCenterBindingSerializer(CoreModelSerializer):

@@ -7,7 +7,6 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ars', '0003_ars_active_arsprogram_active'),
         ('centers', '0003_doctorcenterbinding_active_medicalcenter_active'),
         ('patients', '0011_backfill_patient_hash'),
     ]
