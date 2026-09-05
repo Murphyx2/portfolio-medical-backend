@@ -23,6 +23,7 @@ from apps.core.services import (
     is_own_doctor_relation,
     log_audit,
     program_belongs_to_ars,
+    resolve_accessible_center_ids,
     scope_queryset,
     soft_delete_field_name,
     user_accessible_center_ids,
@@ -66,15 +67,15 @@ def _make_doctor(user, **overrides):
 
 
 def _make_service_type(**overrides):
-    data = {"name": "Consulta", "requires_doctor": False, "requires_diagnosis": True}
+    data = {"name": "Consulta", "requires_doctor": False}
     data.update(overrides)
     return ServiceType.objects.get_or_create(
-        name=data.pop("name"), defaults=data
+        name=data.pop("name").upper(), defaults=data
     )[0]
 
 
 def _make_room(center, **overrides):
-    room_type = RoomType.objects.get_or_create(name="Consult")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULT")[0]
     data = {"code": f"R{center.pk}", "name": "Room 1", "room_type": room_type, "center": center}
     data.update(overrides)
     return Room.objects.create(**data)
@@ -161,12 +162,8 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
     other_center = _make_center(code="C-OWNER-OTHER")
     owned_patient = _make_patient(cedula="00112345675")
     other_patient = _make_patient(cedula="00112345676", center=other_center)
-    record = MedicalRecord.objects.create(
-        patient=owned_patient, created_by=doctor_user, title="Note", diagnosis="x", notes="y"
-    )
-    other_record = MedicalRecord.objects.create(
-        patient=other_patient, created_by=doctor_user, title="Other", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=owned_patient, created_by=doctor_user)
+    other_record = MedicalRecord.objects.create(patient=other_patient, created_by=doctor_user)
 
     qs = scope_queryset(
         MedicalRecord.objects.all(), doctor_user, center_field="patient__center", owner_field="created_by"
@@ -174,6 +171,67 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
     ids = set(qs.values_list("id", flat=True))
     assert record.id in ids
     assert other_record.id in ids  # owned via created_by, despite no center binding
+
+
+# ---------------------------------------------------------------------------
+# resolve_accessible_center_ids / scope_queryset -- non-doctor staff scoping
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_accessible_center_ids_admin_is_unrestricted(admin_user):
+    assert resolve_accessible_center_ids(admin_user) is None
+
+
+def test_resolve_accessible_center_ids_unassigned_staff_is_unrestricted(receptionist_user):
+    """Rollout-safety case: nothing backfills User.center for existing
+    accounts, so an unassigned staff member must stay unrestricted rather
+    than being locked out the moment scoping ships."""
+    assert resolve_accessible_center_ids(receptionist_user) is None
+
+
+@pytest.mark.parametrize(
+    "role_fixture", ["receptionist_user", "it_user", "nurse_user", "center_manager_user"]
+)
+def test_resolve_accessible_center_ids_assigned_staff_is_scoped(request, role_fixture):
+    user = request.getfixturevalue(role_fixture)
+    center = _make_center(code=f"C-{role_fixture}")
+    user.center = center
+    user.save(update_fields=["center"])
+    assert resolve_accessible_center_ids(user) == {center.id}
+
+
+@pytest.mark.parametrize(
+    "role_fixture", ["receptionist_user", "it_user", "nurse_user", "center_manager_user"]
+)
+def test_scope_queryset_assigned_staff_sees_only_their_center(request, role_fixture):
+    user = request.getfixturevalue(role_fixture)
+    own_center = _make_center(code=f"OWN-{role_fixture}")
+    other_center = _make_center(code=f"OTHER-{role_fixture}")
+    user.center = own_center
+    user.save(update_fields=["center"])
+
+    visible = _make_patient(cedula="00199990001", center=own_center)
+    centerless = _make_patient(cedula="00199990002")  # null center -- visible to all
+    hidden = _make_patient(cedula="00199990003", center=other_center)
+
+    ids = set(scope_queryset(Patient.objects.all(), user).values_list("id", flat=True))
+    assert visible.id in ids
+    assert centerless.id in ids
+    assert hidden.id not in ids
+
+
+def test_scope_queryset_admin_always_unrestricted_regardless_of_center(admin_user):
+    """Locked-in decision: ADMIN stays globally unscoped even if a center
+    were ever assigned to an admin account by mistake."""
+    center = _make_center(code="C-ADMIN")
+    admin_user.center = center
+    admin_user.save(update_fields=["center"])
+    other_center = _make_center(code="C-ADMIN-OTHER")
+    _make_patient(cedula="00199990004", center=center)
+    other = _make_patient(cedula="00199990005", center=other_center)
+
+    ids = set(scope_queryset(Patient.objects.all(), admin_user).values_list("id", flat=True))
+    assert other.id in ids
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +247,7 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
         ("nurse_user", False),
         ("receptionist_user", False),
         ("it_user", True),
-        ("center_manager_user", True),
+        ("center_manager_user", False),
     ],
 )
 def test_is_masked_role_per_role(request, role_fixture, expected):
@@ -224,9 +282,7 @@ def test_deactivate_with_cascade_cascades_to_related_soft_deletable_rows(doctor_
     """MedicalRecord.patient is on_delete=CASCADE (unlike Encounter.patient,
     which is PROTECT) -- it's the genuine cascade edge off Patient."""
     patient = _make_patient()
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Note", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
     assert patient.active is True
     assert record.active is True
 
@@ -451,40 +507,35 @@ def test_mask_doctor_contact_other_staff_masks_phone_email_license_bio(doctor_us
 
 
 def test_ready_for_active_requires_room(doctor_user):
+    from apps.services.models import Service
+
     patient = _make_patient()
-    encounter = _make_encounter(
-        patient, doctor_user, service_type=_make_service_type(requires_diagnosis=False)
+    encounter = _make_encounter(patient, doctor_user)
+    service = Service.objects.create(
+        simon="100010", name="Ready room test", type=encounter.service_type, co_pago=0, privado=0
     )
+    encounter.services.create(service=service)
     errors = encounter.ready_for_active()
     assert "A room is required to admit this encounter." in errors
 
 
 def test_ready_for_active_does_not_require_a_diagnosis(doctor_user):
     # Diagnosis capture was removed from the admission flow entirely --
-    # ready_for_active() no longer checks requires_diagnosis/primary
-    # diagnosis at all, regardless of the service type's flag.
+    # ready_for_active() never checks for a diagnosis at all.
+    from apps.services.models import Service
+
     center = _make_center(code="C-READY1")
     room = _make_room(center)
     patient = _make_patient()
     encounter = _make_encounter(
         patient,
         doctor_user,
-        room=room,
-        service_type=_make_service_type(name="Needs Dx", requires_diagnosis=True),
+        service_type=_make_service_type(name="Needs Dx"),
     )
-    assert encounter.ready_for_active() == []
-
-
-def test_ready_for_active_service_type_not_requiring_diagnosis_skips_check(doctor_user):
-    center = _make_center(code="C-READY3")
-    room = _make_room(center)
-    patient = _make_patient()
-    encounter = _make_encounter(
-        patient,
-        doctor_user,
-        room=room,
-        service_type=_make_service_type(name="No Dx Needed", requires_diagnosis=False),
+    service = Service.objects.create(
+        simon="100011", name="Ready no dx test", type=encounter.service_type, co_pago=0, privado=0
     )
+    encounter.services.create(service=service, room=room)
     assert encounter.ready_for_active() == []
 
 
@@ -501,7 +552,7 @@ def test_sync_related_creates_new_items(doctor_user):
         encounter.diagnoses,
         [{"description": "Flu", "is_primary": True}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -520,7 +571,7 @@ def test_sync_related_updates_matching_id_in_place(doctor_user):
         encounter.diagnoses,
         [{"id": existing.pk, "description": "Updated", "is_primary": True}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -542,7 +593,7 @@ def test_sync_related_deletes_rows_not_resubmitted(doctor_user):
         encounter.diagnoses,
         [{"id": keep.pk, "description": "Keep", "is_primary": False}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -560,7 +611,7 @@ def test_sync_related_empty_items_deletes_all_existing(doctor_user):
         encounter.diagnoses,
         [],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -578,7 +629,7 @@ def test_sync_related_invalid_items_are_skipped_entirely(doctor_user):
         encounter.diagnoses,
         [{"description": ""}],  # invalid: empty description
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -607,7 +658,7 @@ def test_sync_related_id_from_another_encounter_is_not_hijacked(doctor_user):
         encounter_b.diagnoses,
         [{"id": foreign.pk, "description": "New for B", "is_primary": False}],
         is_valid=lambda item: bool(item.get("description")),
-        build_fields=lambda item: {
+        build_fields=lambda item, obj: {
             "description": item["description"],
             "is_primary": item.get("is_primary", False),
         },
@@ -648,9 +699,15 @@ def test_patient_search_filter_unmasked_role_filters_by_name(receptionist_user):
 def test_encounter_search_filter_masked_role_restricted_to_doctor_code_and_number(
     it_user, doctor_user
 ):
+    from apps.services.models import Service
+
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=doctor)
+    encounter = _make_encounter(patient, doctor_user)
+    service = Service.objects.create(
+        simon="100020", name="Search filter test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, doctor=doctor)
 
     # Masked role: patient-name term finds nothing (name search withheld).
     request = _search_request(it_user, patient.first_name)
@@ -687,28 +744,31 @@ def test_encounter_search_filter_unmasked_role_matches_patient_name_and_digits(
     assert list(qs.values_list("id", flat=True)) == [encounter.id]
 
 
-def test_record_search_filter_masked_role_restricted_to_title(it_user, doctor_user):
-    patient = _make_patient(first_name="Ana")
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Consulta general", diagnosis="x", notes="y"
-    )
+def test_record_search_filter_masked_role_matches_name_but_not_digits(it_user, doctor_user):
+    """RecordSearchFilter has no free-text field to search anymore (title
+    moved to RecordEntry-level content, which isn't searched here), so name
+    matching is unconditional (always_lookups) rather than gated behind an
+    unmasked role -- moot in production since IT/CENTER_MANAGER can't reach
+    /api/medical-records/ at all (IsAdminDoctorOrNurse), but this filter is
+    tested here in isolation from that permission layer."""
+    patient = _make_patient(first_name="Ana", cedula="00112345678")
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     request = _search_request(it_user, "Ana")
     qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
-    assert qs.count() == 0
-
-    request = _search_request(it_user, "Consulta")
-    qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
     assert list(qs.values_list("id", flat=True)) == [record.id]
+
+    # Digit-based matching stays gated to unmasked roles.
+    request = _search_request(it_user, "00112345678")
+    qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
+    assert qs.count() == 0
 
 
 def test_record_search_filter_unmasked_role_matches_patient_name_and_digits(
     receptionist_user, doctor_user
 ):
     patient = _make_patient(first_name="Ana", cedula="00112345678")
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Consulta general", diagnosis="x", notes="y"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     request = _search_request(receptionist_user, "Ana")
     qs = RecordSearchFilter().filter_queryset(request, MedicalRecord.objects.all(), None)
@@ -729,14 +789,12 @@ def test_patient_search_filter_multiple_terms_are_and_ed(receptionist_user):
 
 
 def test_patient_search_filter_guardian_cedula_matches(receptionist_user):
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
 
     request = _search_request(receptionist_user, guardian_cedula)
@@ -748,14 +806,12 @@ def test_encounter_search_filter_does_not_match_guardian_cedula(receptionist_use
     """EncounterSearchFilter's digit lookup deliberately omits
     include_guardian -- confirms the one documented behavioral fork between
     PatientSearchFilter and EncounterSearchFilter."""
+    from apps.patients.models import PatientGuardian
+
     guardian_cedula = "00198765432"
-    minor = _make_patient(
-        first_name="Kid",
-        cedula="",
-        has_guardian=True,
-        guardian_cedula=guardian_cedula,
-        guardian_first_name="Parent",
-        guardian_last_name="One",
+    minor = _make_patient(first_name="Kid", cedula="", has_guardian=True)
+    PatientGuardian.objects.create(
+        patient=minor, first_name="Parent", last_name="One", cedula=guardian_cedula,
     )
     _make_encounter(minor, doctor_user)
 
@@ -856,24 +912,38 @@ def test_program_belongs_to_ars_mismatched(db):
 # ---------------------------------------------------------------------------
 
 
+def _encounter_with_doctor(patient, created_by, doctor):
+    """is_owner_doctor test helper: an encounter with one service line
+    assigned to `doctor` (ownership now lives on the service line, not on
+    Encounter itself)."""
+    from apps.services.models import Service
+
+    encounter = _make_encounter(patient, created_by)
+    service = Service.objects.create(
+        simon="100021", name="Owner doctor test", type=encounter.service_type, co_pago=0, privado=0
+    )
+    encounter.services.create(service=service, doctor=doctor)
+    return encounter
+
+
 def test_is_owner_doctor_non_doctor_always_true(admin_user, doctor_user):
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    appointment = _make_encounter(patient, doctor_user, doctor=doctor)
-    assert is_owner_doctor(admin_user, appointment) is True
+    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
+    assert is_owner_doctor(admin_user, encounter) is True
 
 
 def test_is_owner_doctor_owning_doctor_true(doctor_user):
     doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=doctor)
+    encounter = _encounter_with_doctor(patient, doctor_user, doctor)
     assert is_owner_doctor(doctor_user, encounter) is True
 
 
 def test_is_owner_doctor_foreign_doctor_false(doctor_user, admin_user):
     other_user_doctor = _make_doctor(doctor_user)
     patient = _make_patient()
-    encounter = _make_encounter(patient, doctor_user, doctor=other_user_doctor)
+    encounter = _encounter_with_doctor(patient, doctor_user, other_user_doctor)
 
     from apps.accounts.models import User
 

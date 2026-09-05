@@ -1,7 +1,13 @@
 """Services module: RBAC (read=all staff, write=ADMIN/CENTER_MANAGER),
 soft-delete/restore, non-unique SIMON, and ServiceType lookup behavior."""
 
-from apps.services.models import Service, ServiceType
+from decimal import Decimal
+
+import pytest
+
+from apps.ars.models import ARS, ARSProgram
+from apps.services.models import Service, ServicePrice, ServiceType
+from apps.services.services import resolve_line_price
 
 
 def _service_type(name="Consult"):
@@ -169,7 +175,7 @@ def test_service_list_includes_type_name(auth_client, admin_user):
     _service(type=st)
     res = auth_client(admin_user).get("/api/services/")
     assert res.status_code == 200, res.data
-    assert res.data["results"][0]["type_name"] == "Physical Therapy"
+    assert res.data["results"][0]["type_name"] == "PHYSICAL THERAPY"
 
 
 def test_deactivating_service_type_does_not_break_existing_services(
@@ -187,7 +193,7 @@ def test_deactivating_service_type_does_not_break_existing_services(
 
     res = auth_client(admin_user).get(f"/api/services/{svc.id}/")
     assert res.status_code == 200, res.data
-    assert res.data["type_name"] == "Dermatology"
+    assert res.data["type_name"] == "DERMATOLOGY"
 
 
 def test_seed_migration_created_default_service_types(db):
@@ -196,30 +202,27 @@ def test_seed_migration_created_default_service_types(db):
 
 
 # ---------------------------------------------------------------------------
-# requires_doctor/requires_diagnosis: drive the Admission form's conditional
-# doctor requirement and admit-time diagnosis requirement (merged in from
-# the former apps.encounters.EncounterType).
+# requires_doctor: drives the Admission form's conditional doctor
+# requirement (merged in from the former apps.encounters.EncounterType).
 # ---------------------------------------------------------------------------
 
 
-def test_service_type_requires_doctor_and_diagnosis_defaults(auth_client, admin_user):
+def test_service_type_requires_doctor_defaults(auth_client, admin_user):
     res = auth_client(admin_user).post(
         "/api/service-types/", {"name": "Chequeo"}, format="json"
     )
     assert res.status_code == 201, res.data
     assert res.data["requires_doctor"] is False
-    assert res.data["requires_diagnosis"] is True
 
 
-def test_service_type_requires_doctor_and_diagnosis_round_trip(auth_client, admin_user):
+def test_service_type_requires_doctor_round_trip(auth_client, admin_user):
     res = auth_client(admin_user).post(
         "/api/service-types/",
-        {"name": "Laboratorio", "requires_doctor": False, "requires_diagnosis": False},
+        {"name": "Laboratorio", "requires_doctor": False},
         format="json",
     )
     assert res.status_code == 201, res.data
     assert res.data["requires_doctor"] is False
-    assert res.data["requires_diagnosis"] is False
 
     st_id = res.data["id"]
     res = auth_client(admin_user).patch(
@@ -227,3 +230,134 @@ def test_service_type_requires_doctor_and_diagnosis_round_trip(auth_client, admi
     )
     assert res.status_code == 200, res.data
     assert res.data["requires_doctor"] is True
+
+
+# ---------------------------------------------------------------------------
+# ServicePrice: per-ARS / per-ARS+Program Co-pago overrides, resolved
+# most-specific-first via resolve_line_price -- see apps/services/services.py.
+# ---------------------------------------------------------------------------
+
+
+def _ars(name="Test ARS", ars_id="TA"):
+    return ARS.objects.create(ars_id=ars_id, name=name)
+
+
+def _program(ars, name="Basico"):
+    return ARSProgram.objects.create(ars=ars, name=name)
+
+
+def test_resolve_line_price_falls_back_to_service_co_pago_when_no_override(db):
+    svc = _service(co_pago=Decimal("500.00"), privado=Decimal("1500.00"))
+    ars = _ars()
+    assert resolve_line_price(svc, True, ars, None) == Decimal("500.00")
+
+
+def test_resolve_line_price_uncovered_uses_privado(db):
+    svc = _service(co_pago=Decimal("500.00"), privado=Decimal("1500.00"))
+    ars = _ars()
+    assert resolve_line_price(svc, False, ars, None) == Decimal("1500.00")
+    # No ARS at all (Particular) also uses privado, regardless of ars_covered.
+    assert resolve_line_price(svc, True, None, None) == Decimal("1500.00")
+
+
+def test_resolve_line_price_uses_ars_level_override(db):
+    svc = _service(co_pago=Decimal("500.00"), privado=Decimal("1500.00"))
+    ars = _ars()
+    ServicePrice.objects.create(service=svc, ars=ars, co_pago="350.00")
+    assert resolve_line_price(svc, True, ars, None) == Decimal("350.00")
+
+
+def test_resolve_line_price_ars_program_override_beats_ars_level(db):
+    svc = _service(co_pago=Decimal("500.00"), privado=Decimal("1500.00"))
+    ars = _ars()
+    program = _program(ars)
+    ServicePrice.objects.create(service=svc, ars=ars, co_pago="350.00")
+    ServicePrice.objects.create(service=svc, ars=ars, ars_program=program, co_pago="200.00")
+    assert resolve_line_price(svc, True, ars, program) == Decimal("200.00")
+    # A different program on the same ARS still falls back to the ARS-level override.
+    other_program = _program(ars, name="Premium")
+    assert resolve_line_price(svc, True, ars, other_program) == Decimal("350.00")
+
+
+def test_serviceprice_write_rbac(auth_client, admin_user, center_manager_user, receptionist_user):
+    ars = _ars()
+    st = _service_type("RBAC Service Type")
+    for i, user in enumerate((admin_user, center_manager_user)):
+        svc = _service(type=st, simon=f"40000{i}", name=f"RBAC Service {i}")
+        res = auth_client(user).post(
+            "/api/service-prices/",
+            {"service": svc.id, "ars": ars.id, "co_pago": "300.00"},
+            format="json",
+        )
+        assert res.status_code == 201, (user.role, res.data)
+
+    svc = _service(type=st, simon="400002", name="RBAC Service 2")
+    res = auth_client(receptionist_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars.id, "co_pago": "300.00"},
+        format="json",
+    )
+    assert res.status_code == 403, res.data
+
+
+def test_serviceprice_rejects_program_from_different_ars(auth_client, admin_user):
+    svc = _service()
+    ars_a, ars_b = _ars(name="Test ARS A", ars_id="TAA"), _ars(name="Test ARS B", ars_id="TAB")
+    program_b = _program(ars_b)
+    res = auth_client(admin_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars_a.id, "ars_program": program_b.id, "co_pago": "100.00"},
+        format="json",
+    )
+    assert res.status_code == 400, res.data
+    assert "ars_program" in res.data
+
+
+def test_serviceprice_uniqueness_per_ars_level(db):
+    svc = _service()
+    ars = _ars()
+    ServicePrice.objects.create(service=svc, ars=ars, co_pago="100.00")
+    with pytest.raises(Exception):
+        ServicePrice.objects.create(service=svc, ars=ars, co_pago="200.00")
+
+
+def test_serviceprice_duplicate_via_api_is_a_clean_400_not_500(auth_client, admin_user):
+    """Regression: the (service, ars) / (service, ars, ars_program)
+    uniqueness is enforced by partial UniqueConstraints, which DRF cannot
+    auto-derive a UniqueTogetherValidator from -- without an explicit check
+    in ServicePriceSerializer.validate(), a duplicate combo reached the DB
+    and surfaced as a raw IntegrityError (500), not a validation error."""
+    svc = _service()
+    ars = _ars()
+    res1 = auth_client(admin_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars.id, "co_pago": "300.00"},
+        format="json",
+    )
+    assert res1.status_code == 201, res1.data
+
+    res2 = auth_client(admin_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars.id, "co_pago": "400.00"},
+        format="json",
+    )
+    assert res2.status_code == 400, res2.data
+
+
+def test_serviceprice_duplicate_ars_program_level_via_api_is_a_clean_400(auth_client, admin_user):
+    svc = _service()
+    ars = _ars()
+    program = _program(ars)
+    res1 = auth_client(admin_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars.id, "ars_program": program.id, "co_pago": "300.00"},
+        format="json",
+    )
+    assert res1.status_code == 201, res1.data
+
+    res2 = auth_client(admin_user).post(
+        "/api/service-prices/",
+        {"service": svc.id, "ars": ars.id, "ars_program": program.id, "co_pago": "400.00"},
+        format="json",
+    )
+    assert res2.status_code == 400, res2.data

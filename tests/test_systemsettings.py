@@ -52,9 +52,21 @@ def test_it_can_read_but_not_write(auth_client, it_user):
     assert res.status_code == 403
 
 
+def test_center_manager_can_read_but_not_write(auth_client, center_manager_user):
+    """CENTER_MANAGER needs read access to reach the Settings page's
+    language section, but stays read-only on the numeric fields (only ADMIN
+    can edit those; language itself has no backend model to write)."""
+    client = auth_client(center_manager_user)
+    assert client.get("/api/settings/").status_code == 200
+    res = client.patch(
+        "/api/settings/", {"login_lockout_threshold": 7}, format="json"
+    )
+    assert res.status_code == 403
+
+
 @pytest.mark.parametrize(
     "role_fixture",
-    ["doctor_user", "nurse_user", "receptionist_user", "center_manager_user"],
+    ["doctor_user", "nurse_user", "receptionist_user"],
 )
 def test_other_roles_are_denied(auth_client, role_fixture, request):
     user = request.getfixturevalue(role_fixture)
@@ -264,9 +276,7 @@ def test_max_image_upload_size_is_configurable(auth_client, admin_user, doctor_u
         first_name="Jane", last_name="Doe", gender="FEMALE",
         phone="8095550100", address="123 Main St", email="jane@example.com",
     )
-    record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="Note", diagnosis="D"
-    )
+    record = MedicalRecord.objects.create(patient=patient, created_by=doctor_user)
 
     admin_client = auth_client(admin_user)
     admin_client.patch("/api/settings/", {"max_image_upload_mb": 1}, format="json")

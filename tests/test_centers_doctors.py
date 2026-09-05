@@ -17,6 +17,8 @@ def _center_payload(**overrides):
 
 def _doctor_payload(**overrides):
     data = {
+        "first_name": "Test",
+        "last_name": "Doctor",
         "license_number": "LIC-100",
         "contact_phone": "8095550102",
     }
@@ -27,6 +29,8 @@ def _doctor_payload(**overrides):
 def _create_doctor_profile(user):
     return DoctorProfile.objects.create(
         user=user,
+        first_name=user.first_name or user.username,
+        last_name=user.last_name,
         license_number=f"LIC-{user.id}",
         contact_phone="8095550000",
     )
@@ -161,7 +165,7 @@ def test_doctor_default_room_prefills_and_reports_name(auth_client, admin_user, 
     from apps.rooms.models import Room, RoomType
 
     center = MedicalCenter.objects.create(name="C", code="C1", address="A", phone="1")
-    room_type = RoomType.objects.get_or_create(name="Consulta")[0]
+    room_type = RoomType.objects.get_or_create(name="CONSULTA")[0]
     room = Room.objects.create(code="R1", name="Room 1", room_type=room_type, center=center)
     profile = _create_doctor_profile(doctor_user)
 
@@ -170,7 +174,7 @@ def test_doctor_default_room_prefills_and_reports_name(auth_client, admin_user, 
     )
     assert res.status_code == 200, res.data
     assert res.data["default_room"] == room.id
-    assert res.data["default_room_name"] == "Room 1"
+    assert res.data["default_room_name"] == "ROOM 1"
 
 
 def test_doctor_code_auto_generated_and_unique(make_user):
@@ -286,17 +290,19 @@ def test_any_staff_role_can_read_doctor_services(auth_client, admin_user, it_use
     assert res.data["services_detail"] == [{"id": service.id, "name": service.name}]
 
 
-def test_center_manager_cannot_edit_other_doctor_fields(auth_client, center_manager_user, doctor_user):
+def test_center_manager_can_edit_other_doctor_fields(auth_client, center_manager_user, doctor_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit), so
+    # it's no longer confined to just services/rooms on a doctor profile.
     profile = _create_doctor_profile(doctor_user)
     service = _service()
     res = auth_client(center_manager_user).patch(
         f"/api/doctors/profiles/{profile.id}/",
-        {"services": [service.id], "license_number": "LIC-HIJACK"},
+        {"services": [service.id], "license_number": "LIC-CM-OK"},
         format="json",
     )
-    assert res.status_code == 400, res.data
+    assert res.status_code == 200, res.data
     profile.refresh_from_db()
-    assert profile.license_number != "LIC-HIJACK"
+    assert profile.license_number == "LIC-CM-OK"
 
 
 def test_doctor_services_write_excludes_inactive_service(auth_client, admin_user, doctor_user):
@@ -375,14 +381,14 @@ def test_any_staff_role_can_read_doctor_rooms(auth_client, admin_user, it_user, 
     assert res.data["rooms_detail"] == [{"id": room.id, "name": room.name}]
 
 
-def test_center_manager_cannot_edit_other_doctor_fields_via_rooms(auth_client, center_manager_user, doctor_user):
+def test_center_manager_can_edit_other_doctor_fields_via_rooms(auth_client, center_manager_user, doctor_user):
     profile = _create_doctor_profile(doctor_user)
     room = _room()
     res = auth_client(center_manager_user).patch(
         f"/api/doctors/profiles/{profile.id}/",
-        {"rooms": [room.id], "license_number": "LIC-HIJACK"},
+        {"rooms": [room.id], "license_number": "LIC-CM-OK-2"},
         format="json",
     )
-    assert res.status_code == 400, res.data
+    assert res.status_code == 200, res.data
     profile.refresh_from_db()
-    assert profile.license_number != "LIC-HIJACK"
+    assert profile.license_number == "LIC-CM-OK-2"

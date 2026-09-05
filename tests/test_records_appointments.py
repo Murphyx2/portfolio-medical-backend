@@ -3,7 +3,7 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.doctors.models import DoctorProfile
 from apps.medicines.models import Medicine
 from apps.patients.models import Patient
-from apps.records.models import ConsultationLog, MedicalRecord
+from apps.records.models import MedicalRecord, RecordEntry, RecordImage
 from apps.services.models import Service, ServiceType
 
 
@@ -27,25 +27,17 @@ def _make_doctor(user):
 
 
 def _make_service():
-    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    service_type = ServiceType.objects.get_or_create(name="CONSULTA")[0]
     return Service.objects.create(
         simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )
 
 
 def _make_record(patient, doctor_user, **overrides):
-    data = {
-        "title": "Follow-up",
-        "diagnosis": "Hypertension",
-        "treatment": "Lifestyle changes",
-        "medicine_and_doses": "Amlodipine 5mg daily",
-        "notes": "Monitor weekly",
-    }
-    data.update(overrides)
     return MedicalRecord.objects.create(
         patient=patient,
         created_by=doctor_user,
-        **data,
+        **overrides,
     )
 
 
@@ -53,12 +45,7 @@ def test_doctor_creates_record(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
     res = auth_client(doctor_user).post(
         "/api/medical-records/",
-        {
-            "patient": patient.id,
-            "title": "Initial consult",
-            "diagnosis": "Migraine",
-            "notes": "Started new meds",
-        },
+        {"patient": patient.id},
         format="json",
     )
     assert res.status_code == 201
@@ -69,7 +56,7 @@ def test_receptionist_cannot_create_record(auth_client, receptionist_user):
     patient = _make_patient(receptionist_user)
     res = auth_client(receptionist_user).post(
         "/api/medical-records/",
-        {"patient": patient.id, "title": "x", "diagnosis": "y"},
+        {"patient": patient.id},
         format="json",
     )
     assert res.status_code in (401, 403)
@@ -86,11 +73,14 @@ def test_receptionist_cannot_read_records(auth_client, receptionist_user, doctor
 
 def test_doctor_reads_full_clinical(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
-    _make_record(patient, doctor_user)
-    res = auth_client(doctor_user).get("/api/medical-records/")
+    record = _make_record(patient, doctor_user)
+    RecordEntry.objects.create(
+        record=record, author=doctor_user, status=RecordEntry.Status.COMPLETED, dx="Hypertension",
+    )
+    res = auth_client(doctor_user).get("/api/record-entries/")
     assert res.status_code == 200
     result = res.data["results"][0]
-    assert result["diagnosis"] == "Hypertension"
+    assert result["dx"] == "Hypertension"
 
 
 def test_it_cannot_read_records(auth_client, it_user, doctor_user, receptionist_user):
@@ -119,16 +109,29 @@ def test_record_patient_info_full_for_doctor(auth_client, doctor_user, reception
     assert patient_info["cedula"] == "00112345678"
 
 
-def test_consultation_log_creation(auth_client, doctor_user, receptionist_user):
+def test_record_entry_creation(auth_client, doctor_user, receptionist_user):
     patient = _make_patient(receptionist_user)
+    record = _make_record(patient, doctor_user)
     res = auth_client(doctor_user).post(
-        "/api/consultation-logs/",
-        {"patient": patient.id, "subjective": "Headaches for 2 weeks", "plan": "MRI"},
+        "/api/record-entries/",
+        {"record": record.id, "dx": "Headaches for 2 weeks", "tx": "MRI"},
         format="json",
     )
     assert res.status_code == 201
-    log = ConsultationLog.objects.get()
-    assert log.doctor == doctor_user
+    entry = RecordEntry.objects.get()
+    assert entry.author == doctor_user
+
+
+def test_record_image_serializes_created_at(auth_client, doctor_user, receptionist_user):
+    patient = _make_patient(receptionist_user)
+    record = _make_record(patient, doctor_user)
+    RecordImage.objects.create(record=record, image="test.jpg", caption="x")
+
+    res = auth_client(doctor_user).get("/api/medical-records/")
+    assert res.status_code == 200
+    images = res.data["results"][0]["images"]
+    assert len(images) == 1
+    assert images[0]["created_at"] is not None
 
 
 def test_medicine_crud_for_admin(auth_client, admin_user):

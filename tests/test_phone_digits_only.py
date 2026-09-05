@@ -43,6 +43,8 @@ def _center_payload(**overrides):
 def _doctor_payload(user_id, **overrides):
     data = {
         "user": user_id,
+        "first_name": "Test",
+        "last_name": "Doctor",
         "license_number": "LIC-PH",
         "contact_phone": "(809) 555-1212",
     }
@@ -127,13 +129,23 @@ def test_doctor_contact_phone_validated(auth_client, admin_user, doctor_user):
     assert "contact_phone" in bad.data
 
 
-def test_it_and_cm_still_see_masked_phone(auth_client, it_user, make_user, receptionist_user):
+def test_it_still_sees_masked_phone(auth_client, it_user, receptionist_user):
     created = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(), format="json"
     )
     pid = created.data["id"]
-    for user in (it_user, make_user("cm", "CENTER_MANAGER")):
-        res = auth_client(user).get(f"/api/patients/{pid}/")
-        assert res.status_code == 200
-        assert MASK in res.data["phone"]
-        assert res.data["phone"] != "8095551212"
+    res = auth_client(it_user).get(f"/api/patients/{pid}/")
+    assert res.status_code == 200
+    assert MASK in res.data["phone"]
+    assert res.data["phone"] != "8095551212"
+
+
+def test_center_manager_sees_full_phone(auth_client, make_user, receptionist_user):
+    # CENTER_MANAGER is admin-equivalent app-wide (except Settings edit).
+    created = auth_client(receptionist_user).post(
+        "/api/patients/", _patient_payload(), format="json"
+    )
+    pid = created.data["id"]
+    res = auth_client(make_user("cm", "CENTER_MANAGER")).get(f"/api/patients/{pid}/")
+    assert res.status_code == 200
+    assert res.data["phone"] == "8095551212"

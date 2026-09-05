@@ -1,4 +1,6 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.core.masking import mask_doctor_contact
@@ -36,14 +38,43 @@ class DoctorPhoneNumberSerializer(serializers.ModelSerializer):
         return validate_phone(value)
 
 
+class DoctorAccountCreateSerializer(serializers.Serializer):
+    """Write-only input for "Crear cuenta de usuario" on the médico form --
+    creates the linked User in the same transaction as the DoctorProfile,
+    mutually exclusive with passing `user` directly (see validate_user)."""
+
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    email = serializers.EmailField(required=False, allow_blank=True, default="")
+
+    def validate_username(self, value):
+        if get_user_model().objects.filter(username=value).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return value
+
+    def validate_password(self, value):
+        validate_password(value)
+        return value
+
+
 class DoctorProfileSerializer(CoreModelSerializer):
+    first_name = serializers.CharField(max_length=150, allow_blank=False)
+    # Optional, matching User.last_name's own laxity -- the Usuarios-
+    # initiated "crear médico nuevo" flow seeds these from the user's own
+    # Nombre/Apellido, which doesn't require Apellido either.
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
     full_name = serializers.CharField(read_only=True)
-    username = serializers.CharField(source="user.username", read_only=True)
-    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True, default="")
+    user_id = serializers.IntegerField(source="user.id", read_only=True, default=None)
     user = serializers.PrimaryKeyRelatedField(
         queryset=get_user_model().objects.all(),
         write_only=True,
+        required=False,
+        allow_null=True,
     )
+    # Write-only alternative to `user`: creates a new Doctor/a-role login and
+    # links it in the same request, instead of picking an existing one.
+    create_account = DoctorAccountCreateSerializer(write_only=True, required=False)
     default_room_name = serializers.CharField(
         source="default_room.name", read_only=True, default=None
     )
@@ -65,8 +96,11 @@ class DoctorProfileSerializer(CoreModelSerializer):
         fields = [
             "id",
             "user",
+            "create_account",
             "user_id",
             "username",
+            "first_name",
+            "last_name",
             "full_name",
             "code",
             "license_number",
@@ -91,24 +125,59 @@ class DoctorProfileSerializer(CoreModelSerializer):
     def validate_contact_phone(self, value: str) -> str:
         return validate_phone(value)
 
+    def validate_license_number(self, value):
+        # Normalize blank submissions to None rather than "" -- Postgres
+        # allows multiple NULLs under a unique index but not multiple ""s.
+        return value or None
+
+    def validate(self, attrs):
+        if attrs.get("user") and attrs.get("create_account"):
+            raise serializers.ValidationError(
+                {"create_account": "Choose either an existing account to link or create a new one, not both."}
+            )
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
+        create_account = validated_data.pop("create_account", None)
+        if create_account:
+            validated_data["user"] = self._create_account(create_account, validated_data)
         doctor = super().create(validated_data)
         if extra_phones:
             DoctorPhoneNumber.objects.bulk_create(
                 DoctorPhoneNumber(doctor=doctor, phone=p["phone"]) for p in extra_phones
             )
+        doctor.sync_linked_user_name()
         return doctor
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
+        create_account = validated_data.pop("create_account", None)
+        if create_account:
+            validated_data["user"] = self._create_account(create_account, validated_data)
         doctor = super().update(instance, validated_data)
         if extra_phones is not None:
             doctor.extra_phones.all().delete()
             DoctorPhoneNumber.objects.bulk_create(
                 DoctorPhoneNumber(doctor=doctor, phone=p["phone"]) for p in extra_phones
             )
+        doctor.sync_linked_user_name()
         return doctor
+
+    def _create_account(self, data, doctor_data):
+        User = get_user_model()
+        user = User(
+            username=data["username"],
+            email=data.get("email", ""),
+            first_name=doctor_data.get("first_name", ""),
+            last_name=doctor_data.get("last_name", ""),
+            role=User.Role.DOCTOR,
+        )
+        user.set_password(data["password"])
+        user.save()
+        return user
 
     def validate_services(self, value):
         # Read access to services_detail is open to any staff role (see
@@ -137,27 +206,15 @@ class DoctorProfileSerializer(CoreModelSerializer):
                 )
         return value
 
-    def validate(self, attrs):
-        # The view's write permission (IsAdminOrITOrCenterManager) admits a
-        # CENTER_MANAGER at the request level so they can reach the
-        # `services`/`rooms` fields above -- this is what actually confines
-        # them to *only* those fields, since they otherwise have none of
-        # IT's general doctor-profile write access.
-        request = self.context.get("request")
-        user = getattr(request, "user", None) if request else None
-        if user and getattr(user, "is_center_manager", False) and not getattr(
-            user, "is_admin", False
-        ):
-            other_fields = set(self.initial_data.keys()) - {"services", "rooms"}
-            if other_fields:
-                raise serializers.ValidationError(
-                    "Center managers may only edit a doctor's services and rooms."
-                )
-        return attrs
-
     def validate_user(self, value):
+        if value is None:
+            return value
         if self.instance and self.instance.user_id == value.id:
             return value
+        if value.role != value.Role.DOCTOR:
+            raise serializers.ValidationError(
+                "Only users with the Doctor/a role can be linked to a médico."
+            )
         if DoctorProfile.objects.filter(user=value).exists():
             raise serializers.ValidationError(
                 "This user already has a doctor profile."

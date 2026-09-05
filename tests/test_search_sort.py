@@ -193,7 +193,12 @@ def test_patient_invalid_ordering_ignored(auth_client, admin_user, mixed_patient
 
 
 # ---------------------------------------------------------------------------
-# records: search by title / patient name / patient cedula / patient nss
+# records: search by patient name / patient cedula / patient nss
+#
+# MedicalRecord (the Expedientes Médicos chart anchor) has no free-text field
+# of its own anymore -- title/diagnosis/etc. moved to RecordEntry -- so
+# there's no more "search by title" case; only patient-identity search
+# applies here.
 # ---------------------------------------------------------------------------
 
 
@@ -203,17 +208,8 @@ def records_setup(db, doctor_user):
     luis = _patient(
         first_name="Luis", last_name="Perez", cedula="00112345678", nss="98765432109"
     )
-    MedicalRecord.objects.create(
-        patient=ana, created_by=doctor_user, title="Consulta general"
-    )
-    MedicalRecord.objects.create(
-        patient=luis, created_by=doctor_user, title="Control"
-    )
-
-
-def test_record_search_by_title(auth_client, doctor_user, records_setup):
-    res = auth_client(doctor_user).get("/api/medical-records/?search=consulta")
-    assert [r["title"] for r in res.data["results"]] == ["Consulta general"]
+    MedicalRecord.objects.create(patient=ana, created_by=doctor_user)
+    MedicalRecord.objects.create(patient=luis, created_by=doctor_user)
 
 
 def test_record_search_by_patient_name(auth_client, doctor_user, records_setup):
@@ -248,15 +244,14 @@ def test_record_search_by_formatted_cedula(auth_client, doctor_user, records_set
 def test_record_search_blocked_for_it_role(auth_client, it_user, records_setup):
     # Records access was narrowed to ADMIN/DOCTOR/NURSE only -- IT is now
     # blocked outright, superseding the old masked-search-by-title behavior.
-    res = auth_client(it_user).get("/api/medical-records/?search=consulta")
+    res = auth_client(it_user).get("/api/medical-records/?search=perez")
     assert res.status_code == 403
 
 
 def test_record_ordering(auth_client, doctor_user, records_setup):
-    res = auth_client(doctor_user).get("/api/medical-records/?ordering=title")
-    assert [r["title"] for r in res.data["results"]] == sorted(
-        [r["title"] for r in res.data["results"]]
-    )
+    res = auth_client(doctor_user).get("/api/medical-records/?ordering=patient__search_name")
+    names = [r["patient_info"]["full_name"] for r in res.data["results"]]
+    assert names == sorted(names)
 
 
 def test_record_exposes_patient_cedula_and_nss(auth_client, doctor_user, records_setup):
@@ -268,7 +263,7 @@ def test_record_exposes_patient_cedula_and_nss(auth_client, doctor_user, records
 def test_record_blocked_for_it_role(auth_client, it_user, records_setup):
     # Formerly a PII-masking guard for IT; records access was later narrowed
     # to ADMIN/DOCTOR/NURSE only, so IT is blocked outright now.
-    res = auth_client(it_user).get("/api/medical-records/?search=consulta")
+    res = auth_client(it_user).get("/api/medical-records/?search=perez")
     assert res.status_code == 403
 
 
@@ -316,14 +311,14 @@ def test_doctors_search_and_ordering(auth_client, admin_user, db, make_user):
     u1 = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
     u2 = make_user("docB", "DOCTOR", first_name="Abe", last_name="B")
     DoctorProfile.objects.create(
-        user=u1, license_number="L1-CARDIO", contact_phone="8095550001"
+        user=u1, first_name="Zoe", last_name="A", license_number="L1-CARDIO", contact_phone="8095550001"
     )
     DoctorProfile.objects.create(
-        user=u2, license_number="L2-PEDI", contact_phone="8095550002"
+        user=u2, first_name="Abe", last_name="B", license_number="L2-PEDI", contact_phone="8095550002"
     )
     res = auth_client(admin_user).get("/api/doctors/profiles/?search=cardio")
     assert {r["license_number"] for r in res.data["results"]} == {"L1-CARDIO"}
-    res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-user__last_name")
+    res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-last_name")
     assert res.data["results"][0]["full_name"] == "Abe B"
 
 

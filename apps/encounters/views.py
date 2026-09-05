@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from apps.appointments.services import complete_todays_appointments_for_patient
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
-from apps.core.permissions import CanManageEncounters, IsAdminOrIT, IsStaffUser
+from apps.core.permissions import CanManageEncounters, IsAdminOrITOrCenterManager, IsStaffUser
 from apps.core.services import scope_queryset
 from apps.encounters.filters import EncounterSearchFilter
 from apps.encounters.models import Encounter, EncounterAdmitError
@@ -18,17 +18,20 @@ from apps.encounters.serializers import EncounterSerializer
 class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = Encounter.all_objects.select_related(
         "patient", "patient__ars", "patient__ars_program",
-        "doctor__user", "room", "center", "service_type", "ars", "ars_program",
+        "center", "service_type", "ars", "ars_program",
         "created_by",
-    ).prefetch_related("diagnoses", "services__service", "services__doctor__user")
+    ).prefetch_related(
+        "diagnoses", "services__service", "services__doctor__user", "services__room",
+        "patient__guardians",
+    )
     serializer_class = EncounterSerializer
     permission_classes = [IsStaffUser]
     write_permission_classes = [CanManageEncounters]
-    delete_permission_classes = [IsAdminOrIT]
+    delete_permission_classes = [IsAdminOrITOrCenterManager]
     filter_backends = [DjangoFilterBackend, EncounterSearchFilter, OrderingFilter]
     filterset_fields = {
         "patient": ["exact"],
-        "doctor": ["exact"],
+        "services__doctor": ["exact"],
         "center": ["exact"],
         "status": ["exact"],
         "service_type": ["exact"],
@@ -40,11 +43,12 @@ class EncounterViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         "status",
         "priority",
         "patient__search_name",
-        "doctor__code",
     ]
 
     def get_queryset(self):
-        return scope_queryset(super().get_queryset(), self.request.user, owner_field="doctor__user")
+        return scope_queryset(
+            super().get_queryset(), self.request.user, owner_field="services__doctor__user"
+        ).distinct()
 
     @transaction.atomic
     def perform_create(self, serializer):

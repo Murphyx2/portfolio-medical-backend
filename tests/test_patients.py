@@ -6,7 +6,8 @@ from apps.centers.models import DoctorCenterBinding, MedicalCenter
 from apps.core.encryption import is_encrypted
 from apps.core.models import AuditLog
 from apps.doctors.models import DoctorProfile
-from apps.patients.models import Patient
+from apps.core.services.search import patient_ids_matching_digits
+from apps.patients.models import Patient, PatientGuardian
 from apps.records.models import MedicalRecord
 
 
@@ -128,11 +129,9 @@ def test_it_sees_redacted_pii(auth_client, it_user, receptionist_user):
     assert "555" not in result["phone"]
 
 
-def test_nurse_cannot_modify_patients(auth_client, nurse_user, receptionist_user):
-    auth_client(receptionist_user).post("/api/patients/", _patient_payload(), format="json")
-    client = auth_client(nurse_user)
-    res = client.post("/api/patients/", _patient_payload(), format="json")
-    assert res.status_code in (401, 403)
+def test_nurse_can_create_patients(auth_client, nurse_user):
+    res = auth_client(nurse_user).post("/api/patients/", _patient_payload(), format="json")
+    assert res.status_code == 201, res.data
 
 
 def test_update_patient_keeps_encryption(auth_client, receptionist_user):
@@ -260,11 +259,15 @@ def test_patient_list_query_count_does_not_scale_with_row_count(
     assert n1 == n5
 
 
-def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
+def test_doctor_patient_list_no_duplicate_rows_across_multiple_guardians(
     auth_client, doctor_user, db
 ):
-    # PatientViewSet doesn't join medical_records at all, so multiple
-    # MedicalRecords for the same patient can't produce duplicate rows here.
+    # PatientViewSet's queryset prefetches (doesn't join) guardians/
+    # extra_phones, so a patient with several guardians on file can't
+    # produce duplicate rows here. (MedicalRecord is no longer a many-per-
+    # patient relation as of the Expedientes Médicos refactor -- it's now
+    # unique per active patient -- so guardians is the multiplicity this
+    # regression guard actually needs today.)
     center = MedicalCenter.objects.create(
         name="Central", code="C1", address="Addr", phone="8095550000"
     )
@@ -276,15 +279,30 @@ def test_doctor_patient_list_no_duplicate_rows_across_multiple_records(
     )
     patient = Patient.objects.create(first_name="Ana", last_name="Perez", center=center)
     for i in range(3):
-        MedicalRecord.objects.create(
-            patient=patient, created_by=doctor_user, center=center, title=f"Visit {i}"
-        )
+        PatientGuardian.objects.create(patient=patient, first_name=f"G{i}", last_name="X")
 
     res = auth_client(doctor_user).get("/api/patients/?page_size=20")
     assert res.status_code == 200
     assert res.data["count"] == 1
     ids = [r["id"] for r in res.data["results"]]
     assert ids.count(patient.id) == 1
+
+
+def test_patient_ids_matching_digits_dedupes_multiple_matching_guardians(db):
+    # Regression: patient_ids_matching_digits(include_guardian=True) must
+    # yield exactly one id even when several guardians on the same patient
+    # match the search term (the .distinct() call must not be silently
+    # defeated by Patient's default ordering leaking into the SELECT list --
+    # same bug class already fixed once in
+    # reportes/services/engine.py::distinct_ars_program_slices).
+    patient = Patient.objects.create(first_name="Ana", last_name="Perez")
+    for i in range(3):
+        PatientGuardian.objects.create(
+            patient=patient, first_name=f"G{i}", last_name="X", cedula="00112223334"
+        )
+
+    ids = list(patient_ids_matching_digits("00112223334", include_guardian=True))
+    assert ids == [patient.id]
 
 
 def test_allergies_and_critical_conditions_encrypted_at_rest(auth_client, receptionist_user):
@@ -312,15 +330,16 @@ def test_allergies_masked_for_it_role(auth_client, receptionist_user, it_user):
 
 
 def test_creating_patient_auto_creates_placeholder_record(auth_client, receptionist_user):
+    # The placeholder MedicalRecord is now the one living expediente anchor
+    # (no title/diagnosis/notes fields of its own -- those moved to
+    # RecordEntry); allergies/critical_conditions render straight from
+    # Patient in the chart's snapshot header instead of being copied here.
     res = auth_client(receptionist_user).post(
         "/api/patients/", _patient_payload(allergies="Penicillin"), format="json"
     )
     assert res.status_code == 201, res.data
     record = MedicalRecord.objects.get(patient_id=res.data["id"])
     assert record.created_by == receptionist_user
-    assert record.title == "Registro inicial"
-    assert "Penicillin" in record.notes
-    assert record.diagnosis == ""
 
 
 def test_creating_patient_audits_placeholder_record_creation(auth_client, receptionist_user):
@@ -336,3 +355,60 @@ def test_creating_patient_audits_placeholder_record_creation(auth_client, recept
     assert AuditLog.objects.filter(
         target_type="MedicalRecord", target_id=record.id, action="CREATE"
     ).exists()
+
+
+# ---------------------------------------------------------------------------
+# Center scoping for non-doctor staff (RECEPTIONIST/IT/NURSE/CENTER_MANAGER)
+# ---------------------------------------------------------------------------
+
+
+def _center(**overrides):
+    data = {"name": "Center", "code": "CTR", "address": "1 St", "phone": "8095551111"}
+    data.update(overrides)
+    return MedicalCenter.objects.create(**data)
+
+
+def test_receptionist_with_assigned_center_only_sees_that_centers_patients(auth_client, receptionist_user):
+    own_center = _center(code="RC-OWN")
+    other_center = _center(code="RC-OTHER")
+    receptionist_user.center = own_center
+    receptionist_user.save(update_fields=["center"])
+
+    client = auth_client(receptionist_user)
+    own_res = client.post("/api/patients/", _patient_payload(cedula="00111110001", center=own_center.id), format="json")
+    other_res = client.post("/api/patients/", _patient_payload(cedula="00111110002", center=other_center.id), format="json")
+    centerless_res = client.post("/api/patients/", _patient_payload(cedula="00111110003"), format="json")
+    assert own_res.status_code == 201, own_res.data
+    assert other_res.status_code == 201, other_res.data
+    assert centerless_res.status_code == 201, centerless_res.data
+
+    ids = {p["id"] for p in client.get("/api/patients/?page_size=100").data["results"]}
+    assert own_res.data["id"] in ids
+    assert centerless_res.data["id"] in ids  # nullable center = visible to all staff
+    assert other_res.data["id"] not in ids
+
+
+def test_receptionist_with_no_center_assigned_sees_everything(auth_client, receptionist_user):
+    """Rollout-safety case: an existing account with no center assigned yet
+    must not be locked out the moment this scoping ships."""
+    center = _center(code="RC-UNASSIGNED")
+    client = auth_client(receptionist_user)
+    res = client.post("/api/patients/", _patient_payload(cedula="00111110004", center=center.id), format="json")
+    assert res.status_code == 201, res.data
+
+    ids = {p["id"] for p in client.get("/api/patients/?page_size=100").data["results"]}
+    assert res.data["id"] in ids
+
+
+def test_admin_sees_all_centers_patients_regardless_of_own_center(auth_client, admin_user, receptionist_user):
+    center_a = _center(code="RC-A")
+    center_b = _center(code="RC-B")
+    admin_user.center = center_a
+    admin_user.save(update_fields=["center"])
+
+    client = auth_client(receptionist_user)
+    res_b = client.post("/api/patients/", _patient_payload(cedula="00111110005", center=center_b.id), format="json")
+    assert res_b.status_code == 201, res_b.data
+
+    ids = {p["id"] for p in auth_client(admin_user).get("/api/patients/?page_size=100").data["results"]}
+    assert res_b.data["id"] in ids

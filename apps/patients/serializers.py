@@ -4,28 +4,27 @@ import unicodedata
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
+from django.utils import timezone
 from rest_framework import serializers
 
+from apps.centers.models import MedicalCenter
 from apps.core.encryption import blind_index_digits
 from apps.core.masking import apply_masking
 from apps.core.serializers import CoreModelSerializer
 from apps.core.services import can_write_center, program_belongs_to_ars
 from apps.core.validators import validate_phone
-from apps.patients.models import Patient, PatientPhoneNumber, patient_age
+from apps.patients.models import Patient, PatientGuardian, PatientPhoneNumber, patient_age
 
 # validate() only re-checks cedula/guardian requiredness when one of these
 # keys is present in the incoming attrs (or on create) -- otherwise a PATCH
 # touching an unrelated field (e.g. "phone") would re-trigger the check
-# against a blank cedula/guardian_* fallback and permanently lock out any
+# against a blank cedula/guardians fallback and permanently lock out any
 # existing minor whose cedula/guardian info isn't on file yet.
 _GUARDIAN_TRIGGER_KEYS = (
     "birth_date",
     "has_guardian",
     "cedula",
-    "guardian_first_name",
-    "guardian_last_name",
-    "guardian_cedula",
-    "guardian_phone",
+    "guardians",
 )
 
 
@@ -72,6 +71,12 @@ class PatientSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     age = serializers.SerializerMethodField()
     ars_name = serializers.CharField(source="ars.name", read_only=True, default=None)
+    # Backward-compat surface: consumers (Encounters' nested patient_info,
+    # the guardian-cedula icon on Patients/Encounters lists) still expect one
+    # flat guardian_cedula value even though a patient can now have several
+    # guardians on file -- this exposes the first one, same as before
+    # guardians became a list. New code should read `.guardians` directly.
+    guardian_cedula = serializers.SerializerMethodField()
 
     class Meta:
         model = Patient
@@ -94,11 +99,34 @@ class PatientSummarySerializer(serializers.ModelSerializer):
     def get_age(self, obj) -> int | None:
         return patient_age(obj)
 
+    def get_guardian_cedula(self, obj) -> str:
+        guardian = obj.primary_guardian
+        return guardian.cedula if guardian else ""
+
 
 class PatientPhoneNumberSerializer(serializers.ModelSerializer):
     class Meta:
         model = PatientPhoneNumber
         fields = ["id", "phone"]
+
+    def validate_phone(self, value: str) -> str:
+        return validate_phone(value)
+
+
+class PatientGuardianSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientGuardian
+        fields = ["id", "first_name", "last_name", "cedula", "nss", "phone"]
+
+    def validate_cedula(self, value: str) -> str:
+        if value:
+            return _normalize_cedula_digits(value, field_label="Guardian cedula")
+        return value
+
+    def validate_nss(self, value: str) -> str:
+        if not value:
+            return value
+        return _normalize_nss_digits(value, field_label="Guardian NSS")
 
     def validate_phone(self, value: str) -> str:
         return validate_phone(value)
@@ -117,6 +145,10 @@ class PatientSerializer(CoreModelSerializer):
     # replaces the full set on every save (delete-and-recreate), matching
     # the simplicity of the rest of this serializer's flat-field shape.
     extra_phones = PatientPhoneNumberSerializer(many=True, required=False)
+    # Guardians/tutors on file -- same delete-and-recreate write shape as
+    # extra_phones (a guardian has no independent identity worth preserving
+    # across an edit).
+    guardians = PatientGuardianSerializer(many=True, required=False)
 
     class Meta:
         model = Patient
@@ -142,36 +174,54 @@ class PatientSerializer(CoreModelSerializer):
             "ars_program",
             "ars_program_name",
             "has_guardian",
-            "guardian_first_name",
-            "guardian_last_name",
-            "guardian_cedula",
-            "guardian_nss",
-            "guardian_phone",
+            "guardians",
             "allergies",
             "critical_conditions",
+            "whatsapp_opt_in",
+            "whatsapp_opt_in_at",
+            "whatsapp_opt_in_by",
             "active",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "whatsapp_opt_in_at", "whatsapp_opt_in_by"]
 
     def create(self, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
+        guardians = validated_data.pop("guardians", None)
         patient = super().create(validated_data)
         if extra_phones:
             PatientPhoneNumber.objects.bulk_create(
                 PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
             )
+        if guardians:
+            # Not bulk_create: PatientGuardian.save() derives cedula_last4/
+            # cedula_hash, which bulk_create would skip (it never calls
+            # save()), leaving guardian-cedula search silently broken.
+            for g in guardians:
+                PatientGuardian.objects.create(patient=patient, **g)
         return patient
 
     def update(self, instance, validated_data):
         extra_phones = validated_data.pop("extra_phones", None)
+        guardians = validated_data.pop("guardians", None)
+        if (
+            "whatsapp_opt_in" in validated_data
+            and validated_data["whatsapp_opt_in"] != instance.whatsapp_opt_in
+        ):
+            validated_data["whatsapp_opt_in_at"] = timezone.now()
+            request = self.context.get("request")
+            validated_data["whatsapp_opt_in_by"] = getattr(request, "user", None) if request else None
         patient = super().update(instance, validated_data)
         if extra_phones is not None:
             patient.extra_phones.all().delete()
             PatientPhoneNumber.objects.bulk_create(
                 PatientPhoneNumber(patient=patient, phone=p["phone"]) for p in extra_phones
             )
+        if guardians is not None:
+            patient.guardians.all().delete()
+            for g in guardians:
+                PatientGuardian.objects.create(patient=patient, **g)
         return patient
 
     def get_fields(self):
@@ -248,19 +298,6 @@ class PatientSerializer(CoreModelSerializer):
         )
         return normalized
 
-    def validate_guardian_cedula(self, value: str) -> str:
-        if value:
-            return _normalize_cedula_digits(value, field_label="Guardian cedula")
-        return value
-
-    def validate_guardian_nss(self, value: str) -> str:
-        if not value:
-            return value
-        return _normalize_nss_digits(value, field_label="Guardian NSS")
-
-    def validate_guardian_phone(self, value: str) -> str:
-        return validate_phone(value)
-
     def validate(self, attrs):
         ars = attrs.get("ars")
         if ars is None and self.instance is not None:
@@ -278,6 +315,16 @@ class PatientSerializer(CoreModelSerializer):
             raise serializers.ValidationError(
                 {"center": "You are not approved to work at this center."}
             )
+
+        # The center field isn't collected from the Patient create/edit form
+        # at all (mirrors apps/rooms/serializers.py::RoomSerializer.validate())
+        # -- always auto-filled from the org's default center on create when
+        # omitted, regardless of role. Never on update, so an existing patient
+        # an admin deliberately left centerless via a direct API call (NULL =
+        # visible to all staff, see CLAUDE.md) doesn't get silently bound on
+        # the next unrelated PATCH.
+        if self.instance is None and attrs.get("center") is None:
+            attrs["center"] = MedicalCenter.objects.filter(is_default=True).first()
 
         # Cedula/guardian requiredness is only re-checked when the request is
         # a create or actually touches one of the relevant fields -- otherwise
@@ -305,17 +352,23 @@ class PatientSerializer(CoreModelSerializer):
                 errors["cedula"] = "Cedula is required."
 
             if is_minor and has_guardian:
-                for field in (
-                    "guardian_first_name",
-                    "guardian_last_name",
-                    "guardian_cedula",
-                    "guardian_phone",
-                ):
-                    value = attrs.get(
-                        field, getattr(self.instance, field) if self.instance else ""
-                    )
-                    if not value:
-                        errors[field] = "Required when the patient is a minor with a guardian on file."
+                guardians = attrs.get(
+                    "guardians",
+                    None if self.instance is None else list(self.instance.guardians.all()),
+                )
+                if not guardians:
+                    errors["guardians"] = "At least one guardian is required when the patient is a minor with a guardian on file."
+                else:
+                    for g in guardians:
+                        g_first = g.get("first_name") if isinstance(g, dict) else g.first_name
+                        g_last = g.get("last_name") if isinstance(g, dict) else g.last_name
+                        g_cedula = g.get("cedula") if isinstance(g, dict) else g.cedula
+                        g_phone = g.get("phone") if isinstance(g, dict) else g.phone
+                        if not (g_first and g_last and g_cedula and g_phone):
+                            errors["guardians"] = (
+                                "Each guardian requires first name, last name, cedula, and phone."
+                            )
+                            break
 
             if errors:
                 raise serializers.ValidationError(errors)
@@ -332,11 +385,6 @@ class PatientSerializer(CoreModelSerializer):
                 "email",
                 "cedula",
                 "nss",
-                "guardian_first_name",
-                "guardian_last_name",
-                "guardian_cedula",
-                "guardian_nss",
-                "guardian_phone",
                 "allergies",
                 "critical_conditions",
                 "first_name",
@@ -345,5 +393,8 @@ class PatientSerializer(CoreModelSerializer):
                 "birth_date",
             ),
             masked_nulls=("age",),
-            masked_list=(("extra_phones", ("phone",)),),
+            masked_list=(
+                ("extra_phones", ("phone",)),
+                ("guardians", ("first_name", "last_name", "cedula", "nss", "phone")),
+            ),
         )

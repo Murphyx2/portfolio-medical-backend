@@ -1,12 +1,14 @@
 from django.db import IntegrityError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import serializers, viewsets
+from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
-from rest_framework.permissions import SAFE_METHODS
+from rest_framework.response import Response
 
-from apps.core.mixins import AuditMixin
+from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import (
     CanViewInactive,
+    IsAdmin,
     IsAdminOrIT,
     IsAdminOrITOrCenterManager,
     IsDoctor,
@@ -16,7 +18,7 @@ from apps.doctors.models import DoctorProfile, DoctorSchedule
 from apps.doctors.serializers import DoctorProfileSerializer, DoctorScheduleSerializer
 
 
-class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
+class DoctorProfileViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = (
         DoctorProfile.all_objects.select_related("user", "default_room")
         .prefetch_related("services", "extra_phones")
@@ -24,33 +26,31 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
     )
     serializer_class = DoctorProfileSerializer
     permission_classes = [IsStaffUser]
+    # Widened to admit CENTER_MANAGER alongside ADMIN/IT -- this class is
+    # method-wide, so DoctorProfileSerializer.validate() is what actually
+    # confines a CENTER_MANAGER to the `services` field (see its docstring).
+    write_permission_classes = [IsAdminOrITOrCenterManager]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["user", "services"]
+    # `isnull` lookup added on `user` so the Usuarios "vincular médico
+    # existente" picker can query ?user__isnull=true server-side instead of
+    # fetching every médico and filtering client-side.
+    filterset_fields = {"user": ["exact", "isnull"], "services": ["exact"]}
     search_fields = [
         "code",
-        "user__first_name",
-        "user__last_name",
+        "first_name",
+        "last_name",
         "license_number",
         "contact_email",
         "contact_phone",
     ]
     ordering_fields = [
         "code",
-        "user__last_name",
-        "user__first_name",
+        "first_name",
+        "last_name",
         "license_number",
         "contact_email",
         "contact_phone",
     ]
-
-    def get_permissions(self):
-        if self.request.method not in SAFE_METHODS:
-            # Widened to admit CENTER_MANAGER alongside ADMIN/IT -- this
-            # class is method-wide, so DoctorProfileSerializer.validate()
-            # is what actually confines a CENTER_MANAGER to the `services`
-            # field (see its docstring).
-            self.permission_classes = [IsAdminOrITOrCenterManager]
-        return super().get_permissions()
 
     def perform_create(self, serializer):
         try:
@@ -82,26 +82,50 @@ class DoctorProfileViewSet(AuditMixin, viewsets.ModelViewSet):
         """
         user = instance.user
         super().perform_destroy(instance)
-        if user.is_active:
+        if user is not None and user.is_active:
             user.is_active = False
             user.save(update_fields=["is_active"])
             self._audit("UPDATE", user)
 
+    def get_permissions(self):
+        if self.action == "unlink_account":
+            # Admin-only, stricter than the general write_permission_classes
+            # (which also admits IT/CenterManager) -- SwapPermissionsMixin's
+            # SAFE/non-SAFE swap would otherwise overwrite this since
+            # unlink_account is a POST, same bypass DoctorScheduleViewSet
+            # uses for `restore`.
+            self.permission_classes = [IsAdmin]
+            return super(SwapPermissionsMixin, self).get_permissions()
+        return super().get_permissions()
 
-class DoctorScheduleViewSet(AuditMixin, viewsets.ModelViewSet):
+    @action(detail=True, methods=["post"])
+    def unlink_account(self, request, pk=None):
+        """Desvincular cuenta: clears the médico's user link without
+        touching or deactivating the User row (unlinking is not deleting)."""
+        instance = self.get_object()
+        instance.user = None
+        instance.save(update_fields=["user"])
+        self.log_action(instance, "UPDATE", details={"action": "unlink_account"})
+        return Response(self.get_serializer(instance).data)
+
+
+class DoctorScheduleViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = DoctorSchedule.all_objects.select_related("doctor__user", "center").all()
     serializer_class = DoctorScheduleSerializer
     permission_classes = [IsStaffUser]
+    write_permission_classes = [IsDoctor]
     filterset_fields = ["doctor", "center", "weekday"]
 
     def get_permissions(self):
         if self.action == "restore":
             # restore is admin-only everywhere (invariant #7); the schedule
             # write permission is IsDoctor, which would otherwise block even
-            # the admin from reaching the restore action.
+            # the admin from reaching the restore action. Bypasses
+            # SwapPermissionsMixin's own SAFE/non-SAFE swap here specifically
+            # (restore is a POST, so it would otherwise overwrite this with
+            # write_permission_classes) by calling straight past it in the MRO.
             self.permission_classes = [CanViewInactive]
-        elif self.request.method not in SAFE_METHODS:
-            self.permission_classes = [IsDoctor]
+            return super(SwapPermissionsMixin, self).get_permissions()
         return super().get_permissions()
 
     def get_queryset(self):

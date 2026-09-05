@@ -19,7 +19,6 @@ class EncounterAdmin(AuditModelAdmin):
     list_display = (
         "encounter_number",
         "patient",
-        "doctor",
         "status",
         "priority",
         "center",

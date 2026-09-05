@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -37,36 +38,16 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     encounter_number = models.CharField(max_length=40, unique=True, null=True, blank=True)
     # Same catalog Services are categorized under (apps/services.ServiceType)
     # -- selecting one narrows the Services section to that type's services,
-    # and its requires_doctor/requires_diagnosis flags drive the doctor and
-    # admit-time diagnosis requirements below.
+    # and its requires_doctor flag drives the doctor requirement below.
     service_type = models.ForeignKey(
         "services.ServiceType", on_delete=models.PROTECT, related_name="encounters"
     )
     patient = models.ForeignKey(
         "patients.Patient", on_delete=models.PROTECT, related_name="encounters"
     )
-    # Nullable: only required when service_type.requires_doctor is true (see
-    # EncounterSerializer.validate()) -- not every service needs a doctor
-    # present (e.g. a lab-only visit).
-    doctor = models.ForeignKey(
-        "doctors.DoctorProfile",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="encounters",
-    )
     # Free text for now -- full referral routing/cross-center workflow is
     # deferred; this just records who referred the patient, if anyone.
     referring_doctor_name = models.CharField(max_length=200, blank=True)
-    # Nullable: required only once the encounter goes ACTIVE (see
-    # ready_for_active()), not while still a DRAFT.
-    room = models.ForeignKey(
-        "rooms.Room",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="encounters",
-    )
     center = models.ForeignKey(
         "centers.MedicalCenter",
         on_delete=models.PROTECT,
@@ -81,7 +62,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
     admitted_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     # Free-text clinical fields: masked in the serializer for non-clinical
-    # roles (same convention as MedicalRecord.diagnosis/ConsultationLog),
+    # roles (same convention as apps.records' RecordEntry dx/tx/observaciones),
     # not encrypted at rest -- matches the existing records app precedent.
     chief_complaint = models.TextField(blank=True)
     cancel_reason = models.CharField(max_length=255, blank=True)
@@ -97,7 +78,6 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         blank=True,
         related_name="encounters",
     )
-    authorization_number = models.CharField(max_length=100, blank=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_encounters"
@@ -109,6 +89,9 @@ class Encounter(TimestampedModel, SoftDeleteModel):
             models.Index(fields=["created_at"]),
             models.Index(fields=["patient", "status"]),
             models.Index(fields=["status", "created_at"]),
+            # Sized to the reportes engine's real filter shape (status +
+            # center + a completed_at range) -- see apps/reportes/services/engine.py.
+            models.Index(fields=["status", "center", "-completed_at"]),
         ]
 
     def ready_for_active(self) -> list[str]:
@@ -120,7 +103,7 @@ class Encounter(TimestampedModel, SoftDeleteModel):
         check reusable from serializer validation too.
         """
         errors = []
-        if self.room_id is None:
+        if self.services.exclude(status=EncounterService.Status.CANCELLED).filter(room__isnull=True).exists():
             errors.append("A room is required to admit this encounter.")
         return errors
 
@@ -211,9 +194,41 @@ class EncounterService(TimestampedModel):
         blank=True,
         related_name="encounter_services",
     )
+    # Nullable: required only once the encounter goes ACTIVE (see
+    # Encounter.ready_for_active()), not while still a DRAFT.
+    room = models.ForeignKey(
+        "rooms.Room",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="encounter_services",
+    )
     quantity = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Resolved once, server-side, when this line is created (see
+    # apps.services.services.resolve_line_price and
+    # EncounterSerializer._set_services) -- an immutable billing snapshot,
+    # not a live lookup: it does NOT change if the encounter's ars/ars_program
+    # is edited afterward, or if a ServicePrice/Service price changes later.
+    # Nullable so historical rows can be backfilled without a hard failure.
+    co_pago = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Per-service coverage: whether this line is billed under the
+    # encounter's ARS -- lets one visit mix ARS-covered and particular
+    # (uncovered) services instead of an all-or-nothing encounter-level flag.
+    ars_covered = models.BooleanField(default=True)
+    # Digits-only string, not an integer -- authorization numbers are
+    # ARS-issued identifiers that may carry leading zeros (e.g.
+    # "00012345"), which a numeric field would silently strip.
+    authorization_number = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        validators=[RegexValidator(
+            regex=r"^\d*[1-9]\d*$",
+            message="Authorization number must contain digits only.",
+        )],
+    )
 
     class Meta:
         ordering = ["id"]

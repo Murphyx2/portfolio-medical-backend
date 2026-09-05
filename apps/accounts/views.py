@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -22,9 +22,9 @@ from apps.accounts.serializers import (
 from apps.accounts.tokens import SettingsRefreshToken as RefreshToken
 from apps.accounts.tokens import SettingsTokenRefreshSerializer
 from apps.core.mixins import AuditMixin
-from apps.core.permissions import IsAdmin, IsAdminOrIT
+from apps.core.permissions import IsAdminOrCenterManager, IsAdminOrITOrCenterManager
 from apps.core.serializers import AuditLogSerializer
-from apps.core.services import client_ip, log_audit
+from apps.core.services import client_ip, log_audit, resolve_accessible_center_ids
 from apps.core.throttling import SettingsLoginRateThrottle
 from apps.systemsettings.services import get_settings
 
@@ -207,24 +207,43 @@ class LogoutView(APIView):
 
 
 class UserViewSet(AuditMixin, viewsets.ModelViewSet):
-    """Admin/IT manage system users and roles.
+    """Admin/IT/CenterManager (CM admin-equivalent) manage system users and
+    roles.
 
     Deactivate/restore, unlock, password-reset, and activity are all
-    Admin-only (get_permissions) even though IT keeps view/create/edit --
-    these are more sensitive than editing a profile field.
+    Admin/CenterManager-only (get_permissions) even though IT keeps
+    view/create/edit -- these are more sensitive than editing a profile
+    field.
     """
 
     queryset = User.objects.all().order_by("username")
-    permission_classes = [IsAdminOrIT]
+    permission_classes = [IsAdminOrITOrCenterManager]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["username", "email", "first_name", "last_name"]
     ordering_fields = ["username", "first_name", "email", "role", "is_active"]
 
     ADMIN_ONLY_ACTIONS = {"destroy", "restore", "unlock", "set_password", "activity"}
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        ids = resolve_accessible_center_ids(self.request.user)
+        if ids is None:
+            return qs
+        # A center-scoped staff member (receptionist/nurse/IT/center
+        # manager) sees: other staff at their own center or with no center
+        # assigned yet (User.center itself), plus doctors approved for
+        # their center via DoctorCenterBinding -- doctors don't use
+        # User.center, so they'd otherwise vanish from a scoped user list
+        # entirely even though front-desk staff need to see their roster.
+        return qs.filter(
+            Q(center_id__in=ids)
+            | Q(center__isnull=True)
+            | Q(doctor_profile__center_bindings__center_id__in=ids, doctor_profile__center_bindings__approved=True)
+        ).distinct()
+
     def get_permissions(self):
         if self.action in self.ADMIN_ONLY_ACTIONS:
-            self.permission_classes = [IsAdmin]
+            self.permission_classes = [IsAdminOrCenterManager]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -242,9 +261,9 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        if instance.is_admin and not request.user.is_admin:
+        if instance.is_admin and not (request.user.is_admin or request.user.is_center_manager):
             return Response(
-                {"detail": "Only admins can delete admin accounts."},
+                {"detail": "Only admins or center managers can delete admin accounts."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)

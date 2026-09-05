@@ -23,8 +23,9 @@ def connect_cache_invalidation() -> None:
     from apps.ars.models import ARS, ARSProgram
     from apps.centers.models import DoctorCenterBinding, MedicalCenter
     from apps.medicines.models import Medicine
+    from apps.records.models import APCategory, APType
     from apps.rooms.models import Room, RoomType
-    from apps.services.models import Service, ServiceType
+    from apps.services.models import Service, ServicePrice, ServiceType
 
     registry = {
         model._meta.model_name: model
@@ -36,8 +37,11 @@ def connect_cache_invalidation() -> None:
             DoctorCenterBinding,
             Service,
             ServiceType,
+            ServicePrice,
             Room,
             RoomType,
+            APCategory,
+            APType,
         )
     }
 

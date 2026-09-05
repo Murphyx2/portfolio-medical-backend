@@ -1,19 +1,122 @@
 from rest_framework import serializers
 
-from apps.centers.models import DoctorCenterBinding, MedicalCenter
+from apps.centers.models import (
+    DoctorCenterBinding,
+    MedicalCenter,
+    MedicalCenterEmail,
+    MedicalCenterPhone,
+)
 from apps.core.serializers import CoreModelSerializer
 from apps.core.validators import validate_phone
 
 
+class MedicalCenterPhoneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalCenterPhone
+        fields = ["id", "number"]
+
+    def validate_number(self, value: str) -> str:
+        return validate_phone(value)
+
+
+class MedicalCenterEmailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalCenterEmail
+        fields = ["id", "email"]
+
+
 class MedicalCenterSerializer(CoreModelSerializer):
     doctor_count = serializers.IntegerField(read_only=True)
+    # Repeatable phones/emails beyond the legacy phone/email fields -- write
+    # side replaces the full set on every save (delete-and-recreate),
+    # mirroring DoctorProfileSerializer.extra_phones.
+    phones = MedicalCenterPhoneSerializer(many=True, required=False)
+    emails = MedicalCenterEmailSerializer(many=True, required=False)
 
     class Meta:
         model = MedicalCenter
-        fields = ["id", "name", "code", "address", "phone", "email", "is_default", "doctor_count", "active"]
+        fields = [
+            "id",
+            "name",
+            "code",
+            "address",
+            "phone",
+            "email",
+            "rnc",
+            "nombre_legal",
+            "nombre_corto",
+            "logo",
+            "phones",
+            "emails",
+            "is_default",
+            "doctor_count",
+            "active",
+        ]
 
     def validate_phone(self, value: str) -> str:
         return validate_phone(value)
+
+    def create(self, validated_data):
+        phones = validated_data.pop("phones", None)
+        emails = validated_data.pop("emails", None)
+        center = super().create(validated_data)
+        if phones:
+            MedicalCenterPhone.objects.bulk_create(
+                MedicalCenterPhone(center=center, number=p["number"], order=i)
+                for i, p in enumerate(phones)
+            )
+        if emails:
+            MedicalCenterEmail.objects.bulk_create(
+                MedicalCenterEmail(center=center, email=e["email"], order=i)
+                for i, e in enumerate(emails)
+            )
+        return center
+
+    def update(self, instance, validated_data):
+        phones = validated_data.pop("phones", None)
+        emails = validated_data.pop("emails", None)
+        center = super().update(instance, validated_data)
+        if phones is not None:
+            center.phones.all().delete()
+            MedicalCenterPhone.objects.bulk_create(
+                MedicalCenterPhone(center=center, number=p["number"], order=i)
+                for i, p in enumerate(phones)
+            )
+        if emails is not None:
+            center.emails.all().delete()
+            MedicalCenterEmail.objects.bulk_create(
+                MedicalCenterEmail(center=center, email=e["email"], order=i)
+                for i, e in enumerate(emails)
+            )
+        return center
+
+
+class MedicalCenterLetterheadSerializer(serializers.ModelSerializer):
+    """Non-sensitive subset of MedicalCenter for the Receta composer's
+    letterhead preview -- deliberately excludes code/doctor_count/is_default
+    (and every other admin-facing field), since this is the one center-data
+    view exposed beyond ADMIN/CENTER_MANAGER (see MedicalCenterViewSet's own
+    docstring for why the full endpoint stays locked down)."""
+
+    phones = MedicalCenterPhoneSerializer(many=True, read_only=True)
+    emails = MedicalCenterEmailSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = MedicalCenter
+        fields = [
+            "id",
+            "name",
+            "nombre_legal",
+            "nombre_corto",
+            "rnc",
+            "address",
+            "logo",
+            "phone",
+            "email",
+            "phones",
+            "emails",
+            "is_default",
+        ]
 
 
 class DoctorCenterBindingSerializer(CoreModelSerializer):

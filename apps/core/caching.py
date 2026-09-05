@@ -39,8 +39,11 @@ _CACHE_INVALIDATION_MAP = {
     "doctorcenterbinding": ("medicalcenter", "doctorcenterbinding"),
     "service": ("service",),
     "servicetype": ("servicetype", "service"),
+    "serviceprice": ("serviceprice",),
     "room": ("room",),
     "roomtype": ("roomtype",),
+    "apcategory": ("apcategory",),
+    "aptype": ("aptype",),
 }
 
 

@@ -32,6 +32,22 @@ class User(AbstractUser):
     failed_login_count = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
 
+    # Which center this staff member belongs to, for RECEPTIONIST, IT,
+    # NURSE and CENTER_MANAGER (see apps/core/services/scoping.py --
+    # resolve_accessible_center_ids). ADMIN ignores this and always sees
+    # every center. DOCTOR ignores this too -- doctors use the many-to-many
+    # DoctorCenterBinding instead, since a doctor can work at more than one
+    # center. Left null: the staff member is center-agnostic (sees
+    # everything) until an admin assigns them a center -- the safe default
+    # so existing accounts aren't locked out the moment scoping is enabled.
+    center = models.ForeignKey(
+        "centers.MedicalCenter",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="managed_by",
+    )
+
     @property
     def is_locked(self) -> bool:
         return bool(self.locked_until and self.locked_until > timezone.now())

@@ -3,19 +3,43 @@ without those apps reaching into apps.records.models directly (the
 modular-monolith convention: cross-app writes go through a service/serializer
 call, not a raw model import)."""
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.db import transaction
 
 from apps.core.services import client_ip, log_audit
 from apps.patients.models import Patient
 
+_LB_PER_KG = Decimal("0.453592")
+
+
+def compute_imc(weight_lb, height_cm) -> Decimal:
+    """Spec §10's formula, stored at 2 decimals (displayed at 1):
+    weightKg = pesoLb * 0.453592; heightM = estaturaCm / 100;
+    imc = weightKg / heightM**2."""
+    weight_kg = Decimal(weight_lb) * _LB_PER_KG
+    height_m = Decimal(height_cm) / Decimal(100)
+    imc = weight_kg / (height_m * height_m)
+    return imc.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def compute_pack_years(cigarettes_per_day, years_smoking) -> Decimal:
+    """paquetes-año = (cigarrillos/día / 20) × años fumando, 1 decimal."""
+    packs_per_day = Decimal(str(cigarettes_per_day)) / Decimal(20)
+    return (packs_per_day * Decimal(str(years_smoking))).quantize(
+        Decimal("0.1"), rounding=ROUND_HALF_UP
+    )
+
 
 def create_initial_record(patient: Patient, user, *, request=None) -> "MedicalRecord":
-    """Every new patient gets a placeholder medical record right away, so
-    Records.tsx always has something to open for them (see the ?patient=
-    auto-open flow from Encounters.tsx) instead of an empty history. Left
-    for a doctor/nurse to fill in during the patient's first real visit --
-    no clinical fields are guessed here, only the safety-relevant summary
-    already captured on the patient form.
+    """Every new patient gets the one living expediente (MedicalRecord) right
+    away, so Records.tsx always has something to open for them (see the
+    ?patient= auto-open flow from Encounters.tsx) instead of an empty
+    history -- left for a doctor/nurse to fill in with a first RecordEntry
+    during the patient's first real visit. The patient's own allergies/
+    critical_conditions already live on Patient itself (rendered in the
+    chart's snapshot header directly from there) so nothing needs
+    duplicating onto the anchor row.
 
     Audited like any other create (previously this bypassed AuditMixin
     entirely since it was a raw model .create() call inside
@@ -23,19 +47,11 @@ def create_initial_record(patient: Patient, user, *, request=None) -> "MedicalRe
     """
     from apps.records.models import MedicalRecord
 
-    notes_parts = []
-    if patient.allergies:
-        notes_parts.append(f"Alergias: {patient.allergies}")
-    if patient.critical_conditions:
-        notes_parts.append(f"Condiciones críticas: {patient.critical_conditions}")
-
     with transaction.atomic():
         record = MedicalRecord.objects.create(
             patient=patient,
             created_by=user,
             center=patient.center,
-            title="Registro inicial",
-            notes="\n".join(notes_parts),
         )
         log_audit(
             user=user,

@@ -28,7 +28,7 @@ def _make_patient():
 
 
 def _make_service():
-    service_type = ServiceType.objects.get_or_create(name="Consulta")[0]
+    service_type = ServiceType.objects.get_or_create(name="CONSULTA")[0]
     return Service.objects.create(
         simon="100001", name="Consulta general", type=service_type, co_pago=0, privado=0
     )
@@ -199,12 +199,15 @@ def test_doctor_record_list_is_unscoped(
     _approve_binding(own_profile, center)
     patient = _make_patient()
 
+    other_patient = Patient.objects.create(
+        first_name="Other", last_name="Patient", gender="MALE", phone="555-0200",
+    )
     own_record = MedicalRecord.objects.create(
-        patient=patient, created_by=doctor_user, title="own", diagnosis="x", center=center
+        patient=patient, created_by=doctor_user, center=center
     )
     other_user = make_user("other_doc", "DOCTOR")
     other_record = MedicalRecord.objects.create(
-        patient=patient, created_by=other_user, title="other", diagnosis="x"
+        patient=other_patient, created_by=other_user
     )
 
     res = auth_client(doctor_user).get("/api/medical-records/")

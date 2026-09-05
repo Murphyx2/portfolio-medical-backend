@@ -7,6 +7,8 @@ from apps.doctors.models import DoctorProfile
 def _profile_payload(user_id, **overrides):
     data = {
         "user": user_id,
+        "first_name": "Test",
+        "last_name": "Doctor",
         "license_number": "LIC-DUP-1",
         "contact_phone": "8095550102",
     }

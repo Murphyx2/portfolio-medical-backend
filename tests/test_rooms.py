@@ -102,7 +102,7 @@ def test_admin_and_center_manager_can_update_room(
             f"/api/rooms/{room.id}/", {"name": "Renamed"}, format="json"
         )
         assert res.status_code == 200, (user.role, res.data)
-        assert res.data["name"] == "Renamed"
+        assert res.data["name"] == "RENAMED"
 
 
 def test_doctor_it_and_receptionist_cannot_update_room(
@@ -276,6 +276,10 @@ def test_room_list_includes_center_name_and_room_type_name(auth_client, admin_us
     assert res.status_code == 200, res.data
     row = res.data["results"][0]
     assert row["center_name"] == "Center INCAF"
+    # "Consulta" is legacy seed data (apps/rooms/migrations/0003_seed_room_types.py,
+    # inserted via a historical model that bypasses RoomType.save()) reused
+    # as-is by _room_type() via get_or_create -- not re-saved here, so it's
+    # exempt from the uppercase-on-save rule, per "don't touch existing data".
     assert row["room_type_name"] == "Consulta"
 
 
@@ -371,9 +375,13 @@ def test_receptionist_cannot_delete_room_type(auth_client, receptionist_user):
 
 
 def test_duplicate_room_type_name_rejected(auth_client, admin_user):
-    _room_type(name="Consulta")
+    # Deliberately not "Consulta" -- that name is legacy seed data
+    # (apps/rooms/migrations/0003_seed_room_types.py) stored mixed-case,
+    # bypassing RoomType.save()'s uppercase rule; a genuinely new name
+    # exercises the real create -> uppercase -> duplicate-detected path.
+    _room_type(name="Radiologia")
     res = auth_client(admin_user).post(
-        "/api/room-types/", {"name": "Consulta"}, format="json"
+        "/api/room-types/", {"name": "radiologia"}, format="json"
     )
     assert res.status_code == 400, res.data
 
