@@ -1,13 +1,10 @@
 def user_accessible_center_ids(user) -> set[int]:
-    """Center ids a user may work with.
+    """Center ids a doctor may work with (their approved center bindings).
 
-    Admins can access all centers. Doctors are scoped to their approved
-    center bindings. Other staff roles have no center relationship in the
-    data model yet, so they are treated as center-agnostic (full scope).
-
-    NOTE: an empty return value is ambiguous (admin=all, staff=center-
-    agnostic, doctor-no-bindings=nothing). Prefer ``scope_queryset`` below
-    for new callers; it resolves that ambiguity into a shaped queryset.
+    Kept doctor-specific and unchanged for existing callers. For the
+    general "what can this user see" question -- including non-doctor
+    staff -- use ``resolve_accessible_center_ids`` below, which is the one
+    that knows how to resolve every role, not just DOCTOR.
     """
     if not getattr(user, "is_authenticated", False):
         return set()
@@ -24,26 +21,74 @@ def user_accessible_center_ids(user) -> set[int]:
     return set()
 
 
-def scope_queryset(qs, user, *, center_field="center", owner_field=None):
-    """Scope ``qs`` to what ``user`` may access, resolving the ambiguous empty
-    set of ``user_accessible_center_ids`` into the correct shape:
+def resolve_accessible_center_ids(user) -> set[int] | None:
+    """The centers ``user`` may see, for every role -- ``None`` means
+    unrestricted (full scope), a set means "only these centers".
 
-    - admins and non-doctor staff: full scope (their empty center set means
-      "all", never "nothing")
-    - doctors: rows in their approved centers, plus (optionally) rows they own
-      via ``owner_field`` (e.g. ``created_by``) -- a doctor with no approved
-      bindings sees only their own rows, not nothing.
+    - unauthenticated / ADMIN: ``None`` (full scope; ADMIN is a platform-
+      wide role by design).
+    - DOCTOR: their approved ``DoctorCenterBinding`` center ids (via
+      ``user_accessible_center_ids``) -- an empty set here correctly means
+      "no approved bindings, no access", not "unrestricted".
+    - RECEPTIONIST / IT / NURSE / CENTER_MANAGER: ``{user.center_id}`` if
+      one is assigned, else ``None``. Nothing backfills ``User.center`` for
+      these roles today, so "unassigned" must mean unrestricted -- treating
+      it as "assigned to no center" would silently lock out every existing
+      account the moment this ships.
+    """
+    if not getattr(user, "is_authenticated", False):
+        return None
+    if getattr(user, "is_admin", False):
+        return None
+    if getattr(user, "is_doctor", False):
+        return user_accessible_center_ids(user)
+    center_id = getattr(user, "center_id", None)
+    return {center_id} if center_id else None
+
+
+def scope_queryset(qs, user, *, center_field="center", owner_field=None, scope_doctors=True):
+    """Scope ``qs`` to what ``user`` may access.
+
+    - admin, or staff with no center assigned yet: full scope.
+    - doctor, when ``scope_doctors`` is True (the default): rows in their
+      approved centers, plus (optionally) rows they own via ``owner_field``
+      (e.g. ``created_by``) -- a doctor with no approved bindings sees only
+      their own rows, not nothing. This is the pre-existing behavior for
+      Appointments/Encounters/Recetas -- unchanged.
+    - doctor, when ``scope_doctors=False``: full scope, same as admin. Pass
+      this for resources where doctor visibility is intentionally
+      unrestricted -- Patients and the Records app both are, on purpose
+      (see test_security_fixes.py::test_doctor_sees_patients_across_all_centers
+      and test_record_image_list_is_unscoped_for_doctor) -- so this function
+      can still be reused there for the *non-doctor* staff scoping this was
+      extended to support, without re-scoping doctors by accident.
+    - other staff with a center assigned (``User.center``): rows in that one
+      center, PLUS rows with a null ``center_field`` -- CLAUDE.md's
+      documented invariant is that a nullable center means "unbound,
+      visible to all staff," not "visible to no one." This only applies to
+      the non-doctor branch: the doctor/``owner_field`` behavior below is
+      pre-existing (Appointments/Encounters/Recetas) and intentionally does
+      *not* auto-include null-center rows -- changing that would silently
+      widen what a center-bound doctor sees on resources that were already
+      tested and correct.
 
     ``center_field`` is the relation path to the center FK (default
     ``"center"``; use e.g. ``"record__center"`` when scoping through a join).
     """
-    if not getattr(user, "is_doctor", False):
+    is_doctor = getattr(user, "is_doctor", False)
+    if is_doctor and not scope_doctors:
+        return qs
+    ids = resolve_accessible_center_ids(user)
+    if ids is None:
         return qs
     from django.db.models import Q
 
-    q = Q(**{f"{center_field}_id__in": user_accessible_center_ids(user)})
-    if owner_field:
-        q |= Q(**{owner_field: user})
+    if is_doctor:
+        q = Q(**{f"{center_field}_id__in": ids})
+        if owner_field:
+            q |= Q(**{owner_field: user})
+    else:
+        q = Q(**{f"{center_field}_id__in": ids}) | Q(**{f"{center_field}__isnull": True})
     return qs.filter(q)
 
 

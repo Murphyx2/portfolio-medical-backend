@@ -19,6 +19,7 @@ from apps.core.permissions import (
     IsAdminDoctorOrNurse,
     IsAdminOrCenterManager,
 )
+from apps.core.services import scope_queryset
 from apps.core.viewsets import ReferenceDataViewSet
 from apps.records.filters import NullsLastOrderingFilter, RecordSearchFilter
 from apps.records.models import (
@@ -61,6 +62,13 @@ class MedicalRecordViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewS
     filterset_fields = ["patient", "center"]
     ordering_fields = ["last_visit_at", "patient__search_name", "created_by__username"]
 
+    def get_queryset(self):
+        # scope_doctors=False: doctor visibility on Records is intentionally
+        # unrestricted (see test_security_fixes.py::
+        # test_record_image_list_is_unscoped_for_doctor and the M-03 comment
+        # in that file) -- only non-doctor staff get center-scoped here.
+        return scope_queryset(super().get_queryset(), self.request.user, scope_doctors=False)
+
     @transaction.atomic
     def perform_create(self, serializer):
         self.perform_create_with_owner(serializer, "created_by")
@@ -73,6 +81,11 @@ class RecordEntryViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
     write_permission_classes = [CanManageRecordEntries]
     filterset_fields = ["record", "status"]
     ordering_fields = ["completed_at", "created_at"]
+
+    def get_queryset(self):
+        return scope_queryset(
+            super().get_queryset(), self.request.user, center_field="record__center", scope_doctors=False
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -130,6 +143,11 @@ class RecordPersonalConditionViewSet(SwapPermissionsMixin, AuditMixin, viewsets.
     write_permission_classes = [CanManageRecords]
     filterset_fields = ["record"]
 
+    def get_queryset(self):
+        return scope_queryset(
+            super().get_queryset(), self.request.user, center_field="record__center", scope_doctors=False
+        )
+
 
 class RecordFamilyConditionViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
     queryset = RecordFamilyCondition.objects.select_related("record", "ap_type", "related_patient")
@@ -137,6 +155,11 @@ class RecordFamilyConditionViewSet(SwapPermissionsMixin, AuditMixin, viewsets.Mo
     permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
     filterset_fields = ["record"]
+
+    def get_queryset(self):
+        return scope_queryset(
+            super().get_queryset(), self.request.user, center_field="record__center", scope_doctors=False
+        )
 
 
 class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
@@ -147,6 +170,11 @@ class RecordImageViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet
     permission_classes = [IsAdminDoctorOrNurse]
     write_permission_classes = [CanManageRecords]
     filterset_fields = ["record"]
+
+    def get_queryset(self):
+        return scope_queryset(
+            super().get_queryset(), self.request.user, center_field="record__center", scope_doctors=False
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):

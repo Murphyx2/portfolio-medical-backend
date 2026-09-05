@@ -4,7 +4,7 @@ from rest_framework.filters import OrderingFilter
 
 from apps.core.mixins import AuditMixin, SwapPermissionsMixin
 from apps.core.permissions import CanDeletePatient, PatientDataPermission
-from apps.core.services import is_masked_role
+from apps.core.services import is_masked_role, scope_queryset
 from apps.patients.filters import PatientSearchFilter
 from apps.patients.models import Patient
 from apps.patients.serializers import PatientSerializer
@@ -36,7 +36,11 @@ class PatientViewSet(SwapPermissionsMixin, AuditMixin, viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # scope_doctors=False: doctor visibility on Patients is intentionally
+        # unrestricted (see test_security_fixes.py::
+        # test_doctor_sees_patients_across_all_centers) -- only non-doctor
+        # staff (receptionist/IT/nurse/center manager) get center-scoped.
+        qs = scope_queryset(super().get_queryset(), self.request.user, scope_doctors=False)
         user = self.request.user
         if is_masked_role(user):
             # IT/CENTER_MANAGER must not be able to confirm whether a specific

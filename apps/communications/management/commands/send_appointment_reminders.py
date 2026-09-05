@@ -23,7 +23,6 @@ class Command(BaseCommand):
 
     help = "Queue WhatsApp appointment reminders due in the configured lead time."
 
-    @transaction.atomic
     def handle(self, *args, **options):
         comm_settings = get_communications_settings()
         if not comm_settings.whatsapp_master_enabled or not comm_settings.whatsapp_configured():
@@ -40,44 +39,66 @@ class Command(BaseCommand):
         window_start = now + lead - timedelta(minutes=30)
         window_end = now + lead + timedelta(minutes=30)
 
-        already_notified_ids = Message.objects.filter(
-            kind=Template.Kind.CITA_RECORDATORIO,
-            appointment_id__in=Appointment.objects.filter(
+        due_ids = list(
+            Appointment.objects.filter(
                 status=Appointment.Status.CONFIRMED,
                 date_time__gte=window_start,
                 date_time__lte=window_end,
-            ).values_list("id", flat=True),
-        ).values_list("appointment_id", flat=True)
-
-        due = Appointment.objects.filter(
-            status=Appointment.Status.CONFIRMED,
-            date_time__gte=window_start,
-            date_time__lte=window_end,
-        ).exclude(id__in=already_notified_ids).select_related("patient", "center", "doctor__user")
+            ).values_list("id", flat=True)
+        )
 
         queued = 0
-        for appointment in due:
-            phone = resolve_patient_recipient(
-                appointment.patient, comm_settings.whatsapp_default_country_code
-            )
-            if not phone:
-                continue
-            message = Message.objects.create(
-                channel=Message.Channel.WHATSAPP,
-                audience=Message.Audience.PATIENT,
-                kind=Template.Kind.CITA_RECORDATORIO,
-                template=template,
-                status=Message.Status.QUEUED,
-                appointment=appointment,
-                created_by=None,
-            )
-            Delivery.objects.create(
-                message=message,
-                patient=appointment.patient,
-                appointment=appointment,
-                address=phone,
-                status=Delivery.Status.QUEUED,
-            )
-            queued += 1
+        for appointment_id in due_ids:
+            if self._queue_reminder_for(appointment_id, template, comm_settings):
+                queued += 1
 
         self.stdout.write(self.style.SUCCESS(f"Queued {queued} reminder(s)."))
+
+    @transaction.atomic
+    def _queue_reminder_for(self, appointment_id: int, template: Template, comm_settings) -> bool:
+        """Locks the Appointment row for the duration of the
+        check-then-create idempotency test, so a concurrent/overlapping run
+        of this same command can't both see 'not yet notified' and both
+        create a reminder Message for the same appointment -- the same
+        TOCTOU gap send_communications had, on the create side instead of
+        the send side. select_for_update(skip_locked=True): a run that loses
+        the race simply skips this appointment this pass rather than
+        blocking on it (nothing else needs a stale lock held here)."""
+        appointment = (
+            Appointment.objects.select_for_update(skip_locked=True)
+            .filter(pk=appointment_id, status=Appointment.Status.CONFIRMED)
+            .select_related("patient")
+            .first()
+        )
+        if appointment is None:
+            return False  # already claimed by a concurrent run, or no longer confirmed
+
+        already_notified = Message.objects.filter(
+            appointment_id=appointment_id, kind=Template.Kind.CITA_RECORDATORIO
+        ).exists()
+        if already_notified:
+            return False
+
+        phone = resolve_patient_recipient(
+            appointment.patient, comm_settings.whatsapp_default_country_code
+        )
+        if not phone:
+            return False
+
+        message = Message.objects.create(
+            channel=Message.Channel.WHATSAPP,
+            audience=Message.Audience.PATIENT,
+            kind=Template.Kind.CITA_RECORDATORIO,
+            template=template,
+            status=Message.Status.QUEUED,
+            appointment=appointment,
+            created_by=None,
+        )
+        Delivery.objects.create(
+            message=message,
+            patient=appointment.patient,
+            appointment=appointment,
+            address=phone,
+            status=Delivery.Status.QUEUED,
+        )
+        return True

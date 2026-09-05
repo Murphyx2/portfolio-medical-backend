@@ -3,9 +3,13 @@ import hmac
 import json
 from datetime import timedelta
 
+from django.core.management import call_command
 from django.utils import timezone
 
 from apps.appointments.models import Appointment
+from apps.communications.management.commands.send_communications import (
+    Command as SendCommunicationsCommand,
+)
 from apps.communications.models import CommunicationsSettings, Delivery, Message, OptOut, Template
 from apps.doctors.models import DoctorProfile
 from apps.patients.models import Patient
@@ -381,3 +385,70 @@ def test_settings_patch_does_not_wipe_token_on_empty_value(auth_client, admin_us
     assert res.status_code == 200
     settings_obj = CommunicationsSettings.objects.get(pk=1)
     assert settings_obj.whatsapp_access_token == "secret-token-value"
+
+
+# ---------------------------------------------------------------------------
+# Worker race condition (send_communications / send_appointment_reminders)
+# ---------------------------------------------------------------------------
+
+
+def test_claim_deliveries_is_not_reentrant(db, doctor_user, receptionist_user):
+    """Regression test for the duplicate-send bug: once _claim_deliveries has
+    flipped a message's QUEUED deliveries to SENDING, a second call for the
+    same message must see nothing left to claim. This is the query-shape
+    guarantee that stands in for real concurrent-process locking, which the
+    SQLite test backend can't exercise (select_for_update is a silent no-op
+    there) -- true lock behavior is verified manually against Postgres."""
+    patient = _patient()
+    doctor = _doctor(doctor_user)
+    appointment = _appointment(patient, doctor, receptionist_user, status=Appointment.Status.CONFIRMED)
+    template = _active_template(Template.Kind.CITA_RECORDATORIO)
+    message = Message.objects.create(
+        channel=Message.Channel.WHATSAPP,
+        audience=Message.Audience.PATIENT,
+        kind=Template.Kind.CITA_RECORDATORIO,
+        template=template,
+        status=Message.Status.QUEUED,
+        appointment=appointment,
+    )
+    Delivery.objects.create(
+        message=message,
+        patient=patient,
+        appointment=appointment,
+        address="+18095550100",
+        status=Delivery.Status.QUEUED,
+    )
+
+    command = SendCommunicationsCommand()
+    first_claim = command._claim_deliveries(message.pk)
+    assert len(first_claim) == 1
+    assert Delivery.objects.get(pk=first_claim[0].pk).status == Delivery.Status.SENDING
+
+    second_claim = command._claim_deliveries(message.pk)
+    assert second_claim == []
+
+
+def test_send_appointment_reminders_is_idempotent_under_double_invocation(doctor_user, receptionist_user):
+    """Regression test: running send_appointment_reminders twice for the
+    same due appointment must queue exactly one reminder, not two -- the bug
+    this guards against is the check-then-create race in
+    _queue_reminder_for, now closed with select_for_update on the
+    Appointment row."""
+    _enable_whatsapp()
+    _active_template(Template.Kind.CITA_RECORDATORIO)
+    patient = _patient(cedula="00100000099")
+    doctor = _doctor(doctor_user)
+    appointment = _appointment(
+        patient,
+        doctor,
+        receptionist_user,
+        status=Appointment.Status.CONFIRMED,
+        date_time=timezone.now() + timedelta(hours=24),
+    )
+
+    call_command("send_appointment_reminders")
+    call_command("send_appointment_reminders")
+
+    reminders = Message.objects.filter(appointment=appointment, kind=Template.Kind.CITA_RECORDATORIO)
+    assert reminders.count() == 1
+    assert Delivery.objects.filter(appointment=appointment).count() == 1
