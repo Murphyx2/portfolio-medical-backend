@@ -23,6 +23,7 @@ from apps.core.services import (
     is_own_doctor_relation,
     log_audit,
     program_belongs_to_ars,
+    resolve_accessible_center_ids,
     scope_queryset,
     soft_delete_field_name,
     user_accessible_center_ids,
@@ -170,6 +171,67 @@ def test_scope_queryset_doctor_owner_field_adds_owned_rows(doctor_user):
     ids = set(qs.values_list("id", flat=True))
     assert record.id in ids
     assert other_record.id in ids  # owned via created_by, despite no center binding
+
+
+# ---------------------------------------------------------------------------
+# resolve_accessible_center_ids / scope_queryset -- non-doctor staff scoping
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_accessible_center_ids_admin_is_unrestricted(admin_user):
+    assert resolve_accessible_center_ids(admin_user) is None
+
+
+def test_resolve_accessible_center_ids_unassigned_staff_is_unrestricted(receptionist_user):
+    """Rollout-safety case: nothing backfills User.center for existing
+    accounts, so an unassigned staff member must stay unrestricted rather
+    than being locked out the moment scoping ships."""
+    assert resolve_accessible_center_ids(receptionist_user) is None
+
+
+@pytest.mark.parametrize(
+    "role_fixture", ["receptionist_user", "it_user", "nurse_user", "center_manager_user"]
+)
+def test_resolve_accessible_center_ids_assigned_staff_is_scoped(request, role_fixture):
+    user = request.getfixturevalue(role_fixture)
+    center = _make_center(code=f"C-{role_fixture}")
+    user.center = center
+    user.save(update_fields=["center"])
+    assert resolve_accessible_center_ids(user) == {center.id}
+
+
+@pytest.mark.parametrize(
+    "role_fixture", ["receptionist_user", "it_user", "nurse_user", "center_manager_user"]
+)
+def test_scope_queryset_assigned_staff_sees_only_their_center(request, role_fixture):
+    user = request.getfixturevalue(role_fixture)
+    own_center = _make_center(code=f"OWN-{role_fixture}")
+    other_center = _make_center(code=f"OTHER-{role_fixture}")
+    user.center = own_center
+    user.save(update_fields=["center"])
+
+    visible = _make_patient(cedula="00199990001", center=own_center)
+    centerless = _make_patient(cedula="00199990002")  # null center -- visible to all
+    hidden = _make_patient(cedula="00199990003", center=other_center)
+
+    ids = set(scope_queryset(Patient.objects.all(), user).values_list("id", flat=True))
+    assert visible.id in ids
+    assert centerless.id in ids
+    assert hidden.id not in ids
+
+
+def test_scope_queryset_admin_always_unrestricted_regardless_of_center(admin_user):
+    """Locked-in decision: ADMIN stays globally unscoped even if a center
+    were ever assigned to an admin account by mistake."""
+    center = _make_center(code="C-ADMIN")
+    admin_user.center = center
+    admin_user.save(update_fields=["center"])
+    other_center = _make_center(code="C-ADMIN-OTHER")
+    _make_patient(cedula="00199990004", center=center)
+    other = _make_patient(cedula="00199990005", center=other_center)
+
+    ids = set(scope_queryset(Patient.objects.all(), admin_user).values_list("id", flat=True))
+    assert other.id in ids
 
 
 # ---------------------------------------------------------------------------

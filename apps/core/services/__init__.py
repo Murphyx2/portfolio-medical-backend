@@ -9,7 +9,12 @@ from apps.core.services.audit import client_ip, log_audit
 from apps.core.services.media import MEDIA_TOKEN_MAX_AGE, sign_media_token, verify_media_token
 from apps.core.services.predicates import is_own_doctor_relation, program_belongs_to_ars
 from apps.core.services.roles import is_masked_role
-from apps.core.services.scoping import can_write_center, scope_queryset, user_accessible_center_ids
+from apps.core.services.scoping import (
+    can_write_center,
+    resolve_accessible_center_ids,
+    scope_queryset,
+    user_accessible_center_ids,
+)
 from apps.core.services.search import patient_ids_matching_digits
 from apps.core.services.soft_delete import (
     can_view_inactive,
@@ -27,6 +32,7 @@ __all__ = [
     "program_belongs_to_ars",
     "is_masked_role",
     "can_write_center",
+    "resolve_accessible_center_ids",
     "scope_queryset",
     "user_accessible_center_ids",
     "patient_ids_matching_digits",
