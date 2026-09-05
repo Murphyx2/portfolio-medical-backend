@@ -157,6 +157,11 @@ class Message(TimestampedModel):
 class Delivery(TimestampedModel):
     class Status(models.TextChoices):
         QUEUED = "QUEUED", "Queued"
+        # Claimed by a send_communications run but not yet resolved SENT/
+        # FAILED -- the state a delivery sits in for the duration of the
+        # (usually sub-second) network call, so a concurrent run's
+        # QUEUED-only claim query never picks it up too.
+        SENDING = "SENDING", "Sending"
         SENT = "SENT", "Sent"
         DELIVERED = "DELIVERED", "Delivered"
         READ = "READ", "Read"

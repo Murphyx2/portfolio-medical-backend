@@ -355,3 +355,60 @@ def test_creating_patient_audits_placeholder_record_creation(auth_client, recept
     assert AuditLog.objects.filter(
         target_type="MedicalRecord", target_id=record.id, action="CREATE"
     ).exists()
+
+
+# ---------------------------------------------------------------------------
+# Center scoping for non-doctor staff (RECEPTIONIST/IT/NURSE/CENTER_MANAGER)
+# ---------------------------------------------------------------------------
+
+
+def _center(**overrides):
+    data = {"name": "Center", "code": "CTR", "address": "1 St", "phone": "8095551111"}
+    data.update(overrides)
+    return MedicalCenter.objects.create(**data)
+
+
+def test_receptionist_with_assigned_center_only_sees_that_centers_patients(auth_client, receptionist_user):
+    own_center = _center(code="RC-OWN")
+    other_center = _center(code="RC-OTHER")
+    receptionist_user.center = own_center
+    receptionist_user.save(update_fields=["center"])
+
+    client = auth_client(receptionist_user)
+    own_res = client.post("/api/patients/", _patient_payload(cedula="00111110001", center=own_center.id), format="json")
+    other_res = client.post("/api/patients/", _patient_payload(cedula="00111110002", center=other_center.id), format="json")
+    centerless_res = client.post("/api/patients/", _patient_payload(cedula="00111110003"), format="json")
+    assert own_res.status_code == 201, own_res.data
+    assert other_res.status_code == 201, other_res.data
+    assert centerless_res.status_code == 201, centerless_res.data
+
+    ids = {p["id"] for p in client.get("/api/patients/?page_size=100").data["results"]}
+    assert own_res.data["id"] in ids
+    assert centerless_res.data["id"] in ids  # nullable center = visible to all staff
+    assert other_res.data["id"] not in ids
+
+
+def test_receptionist_with_no_center_assigned_sees_everything(auth_client, receptionist_user):
+    """Rollout-safety case: an existing account with no center assigned yet
+    must not be locked out the moment this scoping ships."""
+    center = _center(code="RC-UNASSIGNED")
+    client = auth_client(receptionist_user)
+    res = client.post("/api/patients/", _patient_payload(cedula="00111110004", center=center.id), format="json")
+    assert res.status_code == 201, res.data
+
+    ids = {p["id"] for p in client.get("/api/patients/?page_size=100").data["results"]}
+    assert res.data["id"] in ids
+
+
+def test_admin_sees_all_centers_patients_regardless_of_own_center(auth_client, admin_user, receptionist_user):
+    center_a = _center(code="RC-A")
+    center_b = _center(code="RC-B")
+    admin_user.center = center_a
+    admin_user.save(update_fields=["center"])
+
+    client = auth_client(receptionist_user)
+    res_b = client.post("/api/patients/", _patient_payload(cedula="00111110005", center=center_b.id), format="json")
+    assert res_b.status_code == 201, res_b.data
+
+    ids = {p["id"] for p in auth_client(admin_user).get("/api/patients/?page_size=100").data["results"]}
+    assert res_b.data["id"] in ids
