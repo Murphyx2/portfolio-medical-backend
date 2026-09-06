@@ -1,0 +1,363 @@
+"""Search (`?search=`) and ordering (`?ordering=`) on the list endpoints.
+
+Patients store cedula/NSS/name PII encrypted at rest; name search uses the
+plaintext `search_name` index and cedula/NSS search decrypts in Python
+(`PatientSearchFilter`). Records reuse the same trick (`RecordSearchFilter`) so
+an expediente can be found by its patient's cedula/NSS when names collide.
+
+Security invariants:
+- Masked roles (IT/CENTER_MANAGER) cannot search patients by name/cedula/NSS
+  (that would be a PII existence oracle) and can search records by title only.
+- Unknown `?ordering=` fields are ignored (no error).
+"""
+
+import pytest
+
+from apps.appointments.models import Appointment
+from apps.centers.models import DoctorCenterBinding, MedicalCenter
+from apps.doctors.models import DoctorProfile
+from apps.medicines.models import Medicine
+from apps.patients.models import Patient
+from apps.records.models import MedicalRecord
+
+
+def _patient(**overrides):
+    data = {
+        "first_name": "Ana",
+        "last_name": "Perez",
+        "gender": "FEMALE",
+        "cedula": "01001084920",
+        "nss": "12345678901",
+    }
+    data.update(overrides)
+    return Patient.objects.create(**data)
+
+
+@pytest.fixture
+def mixed_patients(db):
+    _patient()
+    _patient(
+        first_name="Luis", last_name="Perez", cedula="00112345678", nss="98765432109"
+    )
+    _patient(
+        first_name="Ana", last_name="Lopez", cedula="99900011122", nss="55544433321"
+    )
+
+
+# ---------------------------------------------------------------------------
+# patients: search
+# ---------------------------------------------------------------------------
+
+
+def test_patient_search_by_name(auth_client, admin_user, mixed_patients):
+    res = auth_client(admin_user).get("/api/patients/?search=perez&page_size=20")
+    assert res.status_code == 200
+    assert {r["full_name"] for r in res.data["results"]} == {"Ana Perez", "Luis Perez"}
+
+
+def test_patient_search_terms_are_and_ed(auth_client, admin_user, mixed_patients):
+    res = auth_client(admin_user).get("/api/patients/?search=ana%20perez&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Ana Perez"}
+
+
+def test_patient_search_by_cedula(auth_client, admin_user, mixed_patients):
+    # Full cedula search matches via the plaintext last-4 index (M-01).
+    res = auth_client(admin_user).get("/api/patients/?search=01001084920&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Ana Perez"}
+
+
+def test_patient_search_by_last4(auth_client, admin_user, mixed_patients):
+    # Searching by the trailing digits alone also matches (index column).
+    res = auth_client(admin_user).get("/api/patients/?search=5678&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Luis Perez"}
+
+
+def test_patient_search_by_nss(auth_client, admin_user, mixed_patients):
+    res = auth_client(admin_user).get("/api/patients/?search=55544433321&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Ana Lopez"}
+
+
+def test_patient_search_by_formatted_cedula(auth_client, admin_user, mixed_patients):
+    # The Records page displays cedula formatted (001-1234567-8); searching that
+    # exact string must still find the patient (non-digits stripped before match).
+    res = auth_client(admin_user).get("/api/patients/?search=001-1234567-8&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Luis Perez"}
+
+
+def test_patient_search_disabled_for_masked_role(auth_client, it_user, mixed_patients):
+    # IT must not be able to probe whether a name/cedula/nss is a patient.
+    res = auth_client(it_user).get("/api/patients/?search=perez&page_size=20")
+    assert res.status_code == 200
+    assert res.data["count"] == 3  # search ignored, list unfiltered
+
+
+def test_patient_last4_index_populated_on_save(db):
+    # The plaintext last-4 columns are maintained on every save so digit search
+    # never has to decrypt the full cedula/NSS (M-01).
+    p = Patient.objects.create(
+        first_name="A", last_name="B", cedula="00112345678", nss="98765432109"
+    )
+    assert p.cedula_last4 == "5678"
+    assert p.nss_last4 == "2109"
+
+
+def test_patient_full_cedula_search_excludes_last4_false_positive(
+    auth_client, admin_user, db
+):
+    # Two patients sharing the same trailing 4 digits: a full-number search
+    # for one must not also return the other (the blind-index hash match is
+    # exact, unlike the last-4 index alone).
+    target = _patient(
+        first_name="Target", last_name="One", cedula="11122335678", nss="00000015678"
+    )
+    _patient(
+        first_name="Sibling", last_name="Two", cedula="99988885678", nss="11111125678"
+    )
+    res = auth_client(admin_user).get("/api/patients/?search=11122335678&page_size=20")
+    assert {r["full_name"] for r in res.data["results"]} == {"Target One"}
+    assert target.cedula_last4 == "5678"
+
+
+def test_patient_partial_digit_search_not_complete_number_returns_nothing(
+    auth_client, admin_user, mixed_patients
+):
+    # 5+ digits that aren't a complete cedula/NSS can't match the hash index
+    # (a cryptographic hash can't do partial matching) -- unlike the old
+    # last-4-only behavior, this correctly returns nothing instead of
+    # same-last-4 false positives.
+    res = auth_client(admin_user).get("/api/patients/?search=001084920&page_size=20")
+    assert res.data["count"] == 0
+
+
+def test_patient_hash_index_populated_on_save(db):
+    from apps.core.encryption import blind_index_digits
+
+    p = Patient.objects.create(
+        first_name="A", last_name="B", cedula="00112345678", nss="98765432109"
+    )
+    assert p.cedula_hash == blind_index_digits("00112345678")
+    assert p.nss_hash == blind_index_digits("98765432109")
+
+
+def test_patient_search_by_cedula_still_masked_for_masked_role(
+    auth_client, it_user, mixed_patients
+):
+    # Full-number search must still be a no-op for masked roles (same
+    # anti-oracle rule as name/last-4 search).
+    res = auth_client(it_user).get("/api/patients/?search=01001084920&page_size=20")
+    assert res.data["count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# patients: ordering
+# ---------------------------------------------------------------------------
+
+
+def test_patient_ordering_plaintext_field(auth_client, admin_user, mixed_patients):
+    res = auth_client(admin_user).get("/api/patients/?ordering=-search_name&page_size=20")
+    names = [r["full_name"] for r in res.data["results"]]
+    assert names == sorted(names, reverse=True)
+
+
+
+def test_patient_ordering_encrypted_field_falls_back_to_default(
+    auth_client, admin_user, mixed_patients
+):
+    # Encrypted columns (cedula/NSS/phone/email/age) cannot be ordered in SQL;
+    # ordering by them is ignored and the list falls back to the default
+    # search_name ordering. The Patients page sorts those columns client-side.
+    res = auth_client(admin_user).get("/api/patients/?ordering=cedula&page_size=20")
+    assert res.status_code == 200
+    assert res.data["count"] == 3
+    res = auth_client(admin_user).get("/api/patients/?ordering=-age&page_size=20")
+    assert res.status_code == 200
+    assert res.data["count"] == 3
+
+
+def test_patient_invalid_ordering_ignored(auth_client, admin_user, mixed_patients):
+    res = auth_client(admin_user).get("/api/patients/?ordering=password&page_size=20")
+    assert res.status_code == 200
+    assert res.data["count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# records: search by patient name / patient cedula / patient nss
+#
+# MedicalRecord (the Expedientes Médicos chart anchor) has no free-text field
+# of its own anymore -- title/diagnosis/etc. moved to RecordEntry -- so
+# there's no more "search by title" case; only patient-identity search
+# applies here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def records_setup(db, doctor_user):
+    ana = _patient()
+    luis = _patient(
+        first_name="Luis", last_name="Perez", cedula="00112345678", nss="98765432109"
+    )
+    MedicalRecord.objects.create(patient=ana, created_by=doctor_user)
+    MedicalRecord.objects.create(patient=luis, created_by=doctor_user)
+
+
+def test_record_search_by_patient_name(auth_client, doctor_user, records_setup):
+    res = auth_client(doctor_user).get("/api/medical-records/?search=luis")
+    assert len(res.data["results"]) == 1
+    assert res.data["results"][0]["patient_info"]["full_name"] == "Luis Perez"
+
+
+def test_record_search_by_patient_cedula(auth_client, doctor_user, records_setup):
+    res = auth_client(doctor_user).get("/api/medical-records/?search=01001084920")
+    assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
+        "Ana Perez"
+    }
+
+
+def test_record_search_by_patient_nss(auth_client, doctor_user, records_setup):
+    res = auth_client(doctor_user).get("/api/medical-records/?search=98765432109")
+    assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
+        "Luis Perez"
+    }
+
+
+def test_record_search_by_formatted_cedula(auth_client, doctor_user, records_setup):
+    # Same normalization as the Patients page: formatted cedula with hyphens
+    # must find the record through the patient's decrypted cedula.
+    res = auth_client(doctor_user).get("/api/medical-records/?search=001-1234567-8")
+    assert {r["patient_info"]["full_name"] for r in res.data["results"]} == {
+        "Luis Perez"
+    }
+
+
+def test_record_search_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Records access was narrowed to ADMIN/DOCTOR/NURSE only -- IT is now
+    # blocked outright, superseding the old masked-search-by-title behavior.
+    res = auth_client(it_user).get("/api/medical-records/?search=perez")
+    assert res.status_code == 403
+
+
+def test_record_ordering(auth_client, doctor_user, records_setup):
+    res = auth_client(doctor_user).get("/api/medical-records/?ordering=patient__search_name")
+    names = [r["patient_info"]["full_name"] for r in res.data["results"]]
+    assert names == sorted(names)
+
+
+def test_record_exposes_patient_cedula_and_nss(auth_client, doctor_user, records_setup):
+    res = auth_client(doctor_user).get("/api/medical-records/?search=ana")
+    assert res.data["results"][0]["patient_info"]["cedula"] == "01001084920"
+    assert res.data["results"][0]["patient_info"]["nss"] == "12345678901"
+
+
+def test_record_blocked_for_it_role(auth_client, it_user, records_setup):
+    # Formerly a PII-masking guard for IT; records access was later narrowed
+    # to ADMIN/DOCTOR/NURSE only, so IT is blocked outright now.
+    res = auth_client(it_user).get("/api/medical-records/?search=perez")
+    assert res.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# other endpoints: search + ordering smoke
+# ---------------------------------------------------------------------------
+
+
+def test_centers_search_and_ordering(auth_client, admin_user, db):
+    MedicalCenter.objects.create(
+        name="Clinica Alpha", code="C1", address="Calle 1", phone="8095550100"
+    )
+    MedicalCenter.objects.create(
+        name="Hospital Beta", code="C2", address="Calle 2", phone="8095550101"
+    )
+    res = auth_client(admin_user).get("/api/centers/?search=clinica")
+    assert {r["name"] for r in res.data["results"]} == {"Clinica Alpha"}
+    res = auth_client(admin_user).get("/api/centers/?ordering=-name")
+    assert [r["name"] for r in res.data["results"]] == [
+        "Hospital Beta",
+        "Clinica Alpha",
+    ]
+
+
+def test_centers_ordering_by_doctor_count(auth_client, admin_user, db, doctor_user):
+    c1 = MedicalCenter.objects.create(
+        name="Alpha", code="A1", address="Calle 1", phone="8095550001"
+    )
+    c2 = MedicalCenter.objects.create(
+        name="Beta", code="B2", address="Calle 2", phone="8095550002"
+    )
+    prof = DoctorProfile.objects.create(
+        user=doctor_user,
+        license_number="LIC1",
+        contact_phone="8095550000",
+    )
+    DoctorCenterBinding.objects.create(
+        doctor=prof, center=c1, approved=True, approved_by=admin_user
+    )
+    res = auth_client(admin_user).get("/api/centers/?ordering=doctor_count")
+    assert [r["name"] for r in res.data["results"]] == ["Beta", "Alpha"]
+
+
+def test_doctors_search_and_ordering(auth_client, admin_user, db, make_user):
+    u1 = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
+    u2 = make_user("docB", "DOCTOR", first_name="Abe", last_name="B")
+    DoctorProfile.objects.create(
+        user=u1, first_name="Zoe", last_name="A", license_number="L1-CARDIO", contact_phone="8095550001"
+    )
+    DoctorProfile.objects.create(
+        user=u2, first_name="Abe", last_name="B", license_number="L2-PEDI", contact_phone="8095550002"
+    )
+    res = auth_client(admin_user).get("/api/doctors/profiles/?search=cardio")
+    assert {r["license_number"] for r in res.data["results"]} == {"L1-CARDIO"}
+    res = auth_client(admin_user).get("/api/doctors/profiles/?ordering=-last_name")
+    assert res.data["results"][0]["full_name"] == "Abe B"
+
+
+def test_medicines_search_and_ordering(auth_client, admin_user, db):
+    Medicine.objects.create(
+        generic_name="Amoxicilina", commercial_name="Amox", concentration="500mg"
+    )
+    Medicine.objects.create(
+        generic_name="Ibuprofeno", commercial_name="Brufen", concentration="400mg"
+    )
+    res = auth_client(admin_user).get("/api/medicines/?search=amoxi")
+    assert {r["generic_name"] for r in res.data["results"]} == {"Amoxicilina"}
+    res = auth_client(admin_user).get("/api/medicines/?ordering=-generic_name")
+    assert [r["generic_name"] for r in res.data["results"]] == [
+        "Ibuprofeno",
+        "Amoxicilina",
+    ]
+
+
+def test_appointments_search_and_ordering(auth_client, admin_user, db, make_user):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    doc = make_user("docA", "DOCTOR", first_name="Zoe", last_name="A")
+    prof = DoctorProfile.objects.create(
+        user=doc, license_number="L1", contact_phone="8095550001"
+    )
+    p1 = _patient(first_name="Ana", last_name="Perez", cedula="11100000003", nss="")
+    p2 = _patient(first_name="Luis", last_name="Perez", cedula="11100000004", nss="")
+    base = timezone.now()
+    Appointment.objects.create(
+        patient=p1, doctor=prof, date_time=base, duration_minutes=30, created_by=admin_user
+    )
+    Appointment.objects.create(
+        patient=p2,
+        doctor=prof,
+        date_time=base + timedelta(hours=1),
+        duration_minutes=30,
+        created_by=admin_user,
+    )
+    res = auth_client(admin_user).get("/api/appointments/?search=ana")
+    assert len(res.data["results"]) == 1
+    res = auth_client(admin_user).get("/api/appointments/?ordering=-date_time")
+    assert res.data["results"][0]["patient_info"]["full_name"] == "Luis Perez"
+
+
+def test_users_search_and_ordering(auth_client, admin_user, db, make_user):
+    make_user("zulu", "RECEPTIONIST", first_name="Zoe", last_name="Z")
+    make_user("alpha", "NURSE", first_name="Abe", last_name="A")
+    res = auth_client(admin_user).get("/api/auth/users/?search=zoe")
+    assert {r["username"] for r in res.data["results"]} == {"zulu"}
+    res = auth_client(admin_user).get("/api/auth/users/?ordering=-username")
+    assert res.data["results"][0]["username"] == "zulu"

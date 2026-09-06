@@ -1,0 +1,11 @@
+# .dockerignore
+.venv/
+__pycache__/
+*.pyc
+*.sqlite3
+.git/
+media/
+staticfiles/
+.pytest_cache/
+.env
+.env.*
